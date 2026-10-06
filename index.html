@@ -77,14 +77,26 @@
   button.small{ padding:4px 9px; font-size:.78rem; border-radius:5px; }
   button.danger-text{ color:var(--danger); border-color:transparent; background:transparent; }
 
-  #people-list{ list-style:none; margin:0 0 14px; padding:0; display:flex; flex-wrap:wrap; gap:7px; }
+  #people-list{ list-style:none; margin:0 0 14px; padding:0; display:flex; flex-direction:column; }
   #people-list li{
-    display:flex; align-items:center; gap:6px; background:var(--paper);
-    border:1px solid var(--line); border-radius:20px; padding:5px 6px 5px 12px; font-size:.86rem;
+    display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr) auto; gap:6px;
+    align-items:center; padding:6px 0; border-bottom:1px solid var(--line); font-size:.86rem;
   }
-  #people-list li input{ border:none; background:transparent; padding:0; width:auto; font-size:.86rem; max-width:130px; }
-  #people-list li button{ border:none; background:transparent; color:var(--ink-soft); padding:2px 6px; border-radius:50%; font-size:.85rem; }
-  #people-list li button:hover{ color:var(--danger); }
+  #people-list li:last-child{ border-bottom:none; }
+  #people-list li input{ width:100%; font-size:.85rem; padding:6px 8px; }
+  #people-list li button, #pairs-list li button{ border:none; background:transparent; color:var(--ink-soft); padding:2px 8px; font-size:.95rem; }
+  #people-list li button:hover, #pairs-list li button:hover{ color:var(--danger); }
+  @media (max-width:560px){
+    #people-list li{ grid-template-columns:1fr 1fr auto; }
+    #people-list li input:first-child{ grid-column:1 / 3; }
+    #people-list li button{ grid-row:1; grid-column:3; }
+  }
+  .add-person-row input{ flex:1 1 130px; }
+  #pairs-list{ list-style:none; margin:0 0 12px; padding:0; }
+  #pairs-list li{ display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 0; border-bottom:1px solid var(--line); font-size:.86rem; }
+  #pairs-list li:last-child{ border-bottom:none; }
+  #pairs-list .empty{ color:var(--ink-soft); font-style:italic; border:none; }
+  #rules-section select{ flex:1 1 150px; }
 
   form.gen{ display:grid; grid-template-columns:repeat(2,1fr); gap:12px 14px; }
   form.gen label{ display:flex; flex-direction:column; gap:5px; font-size:.82rem; color:var(--ink-soft); }
@@ -148,12 +160,24 @@
 
   <section id="team-section">
     <h2>Squadra <span class="count" id="team-count"></span></h2>
-    <p class="hint">Nomi generati a caso per prova — modificali o rimuovili liberamente, poi aggiungi i tuoi.</p>
+    <p class="hint">In ogni turno al massimo 4 persone della stessa regione e una sola persona per provincia. Puoi modificare nome, regione e provincia direttamente qui sotto.</p>
     <ul id="people-list"></ul>
-    <div class="row">
+    <div class="row add-person-row">
       <input type="text" id="new-person" placeholder="Nome e cognome">
+      <input type="text" id="new-region" placeholder="Regione">
+      <input type="text" id="new-province" placeholder="Provincia">
       <button class="ghost" id="add-person">Aggiungi</button>
-      <button class="ghost" id="shuffle-names">Rigenera nomi di prova</button>
+    </div>
+  </section>
+
+  <section id="rules-section">
+    <h2>Non insieme <span class="count" id="rules-count"></span></h2>
+    <p class="hint">Coppie di persone che non devono mai capitare nello stesso turno. Per un gruppo di tre, aggiungi le tre coppie.</p>
+    <ul id="pairs-list"></ul>
+    <div class="row">
+      <select id="pair-a"></select>
+      <select id="pair-b"></select>
+      <button class="ghost" id="add-pair">Aggiungi coppia</button>
     </div>
   </section>
 
@@ -171,7 +195,7 @@
         <div class="minmax">
           <input type="number" id="f-min" min="1" max="20" value="3"> – 
           <input type="number" id="f-max" min="1" max="20" value="5">
-          <span style="color:var(--ink-soft); font-size:.8rem;">a sabato</span>
+          <span style="color:var(--ink-soft); font-size:.8rem;">a sabato (il primo sabato di ogni mese sempre 5)</span>
         </div>
       </label>
       <div class="full">
@@ -214,8 +238,38 @@
 (function(){
   "use strict";
 
-  const LS_PEOPLE = 'turni_sabato_people_v1';
-  const LS_SCHEDULES = 'turni_sabato_schedules_v1';
+  const LS_PEOPLE = 'turni_sabato_people_v2';
+  const LS_SCHEDULES = 'turni_sabato_schedules_v2';
+  const LS_PAIRS = 'turni_sabato_pairs_v2';
+
+  // squadra iniziale: nome, regione, provincia
+  const SEED_TEAM = [
+    ['Angelo Barresi','Calabria','Reggio'],
+    ['Claudio Quieto','Calabria','Reggio'],
+    ['Giacomo Pezzimenti','Calabria','Reggio'],
+    ['Adriano Parise','Calabria','Cosenza'],
+    ['Giuseppe Citino','Calabria','Cosenza'],
+    ['Giuseppe Giofré','Calabria','Vibo'],
+    ['Francesco Rondinelli','Calabria','Lamezia Terme'],
+    ['Francesco Maiolo','Calabria','Crotone'],
+    ['Marco Mesuraca','Calabria','Catanzaro'],
+    ['Andrea Caracciolo','Calabria','Catanzaro'],
+    ['Roberto Antonaci','Puglia','Lecce'],
+    ['Fabio Santacroce','Puglia','Foggia'],
+    ['Carmine Casamassima','Puglia','Foggia'],
+    ['Giuseppe Sparapano','Puglia','Bari'],
+    ['Michele Minafra','Puglia','Bari'],
+    ['Angelo Fabrizio','Campania','Avellino'],
+    ['Gennaro Santonastaso','Campania','Caserta'],
+    ['Valerio Carusone','Campania','Caserta'],
+    ['Vincenzo Porrino','Campania','Caserta'],
+    ['Maurizio Vestini','Campania','Caserta'],
+    ['Viviana Saturno','Campania','Napoli'],
+    ['Davide Cosenza','Campania','Sala Consilina'],
+    ['Giovanni Del Bue','Campania','Sala Consilina'],
+    ["Vitantonio D'Annucci",'Basilicata','Potenza'],
+    ['Mario Lucio Monaco','Basilicata','Potenza']
+  ];
   let dbApi = null;       // resolved "db" capability, or null if unavailable
   let dbReady = false;    // true once we've done our first sync
   let unsubPeople = null, unsubSchedules = null;
@@ -288,8 +342,17 @@
     try{ localStorage.setItem(LS_SCHEDULES, JSON.stringify(list)); }catch(e){}
   }
 
+  function loadPairsLocal(){
+    try{ const raw = localStorage.getItem(LS_PAIRS); if(raw) return JSON.parse(raw); }catch(e){}
+    return [];
+  }
+  function savePairsLocal(list){
+    try{ localStorage.setItem(LS_PAIRS, JSON.stringify(list)); }catch(e){}
+  }
+
   let people = [];
   let schedules = [];
+  let pairs = [];   // coppie che non devono stare insieme: [{a:'Nome', b:'Nome'}]
   let draft = null; // { year, startMonth, saturdays: [{date, people:[name,...]}] }
 
   function setSyncNote(text){
@@ -302,18 +365,34 @@
     setSyncNote('Modalità offline: i dati restano solo su questo dispositivo.');
     people = loadPeopleLocal();
     if(!people){
-      people = randomNames(20).map(n => ({id: uid(), name: n}));
+      people = SEED_TEAM.map(([name,region,province]) => ({id: uid(), name, region, province}));
       savePeopleLocal(people);
     }
     schedules = loadSchedulesLocal();
-    renderPeople(); renderStats(); renderHistory();
+    pairs = loadPairsLocal();
+    renderPeople(); renderRules(); renderStats(); renderHistory();
   }
 
-  async function addPerson(name){
-    if(dbApi){ await dbApi.collection('people').add({name}); }
-    else{ people.push({id: uid(), name}); savePeopleLocal(people); renderPeople(); renderStats(); }
+  async function addPerson(name, region, province){
+    if(dbApi){ await dbApi.collection('people').add({name, region, province}); }
+    else{ people.push({id: uid(), name, region, province}); savePeopleLocal(people); renderPeople(); renderRules(); renderStats(); }
+  }
+  async function updatePersonField(id, field, value){
+    if(dbApi){ await dbApi.doc('people/'+id).update({[field]: value}); }
+    else{
+      const p = people.find(x=>x.id===id);
+      if(p) p[field] = value;
+      savePeopleLocal(people);
+    }
+  }
+  async function savePairs(list){
+    pairs = list;
+    if(dbApi){ await dbApi.doc('meta/rules').set({pairs: list}); }
+    else{ savePairsLocal(list); }
+    renderRules();
   }
   async function renamePersonDoc(id, oldName, newName){
+    const newPairs = pairs.map(pr => ({a: pr.a===oldName?newName:pr.a, b: pr.b===oldName?newName:pr.b}));
     if(dbApi){
       await dbApi.doc('people/'+id).update({name:newName});
       const affected = schedules.filter(p => p.saturdays.some(s => s.people.includes(oldName)));
@@ -321,11 +400,13 @@
         const newSat = period.saturdays.map(s => ({date:s.date, people: s.people.map(n => n===oldName?newName:n)}));
         await dbApi.doc('schedules/'+period.id).update({saturdays:newSat});
       }
+      await savePairs(newPairs);
     } else {
       const p = people.find(x=>x.id===id);
       if(p) p.name = newName;
       renamePersonLocalInSchedules(oldName, newName);
       savePeopleLocal(people); saveSchedulesLocal(schedules);
+      await savePairs(newPairs);
       renderPeople(); renderStats();
     }
   }
@@ -335,17 +416,10 @@
     });
   }
   async function deletePersonDoc(id){
+    const p = people.find(x=>x.id===id);
     if(dbApi){ await dbApi.doc('people/'+id).delete(); }
     else{ people = people.filter(x=>x.id!==id); savePeopleLocal(people); renderPeople(); renderStats(); }
-  }
-  async function replaceAllPeople(names){
-    if(dbApi){
-      for(const p of people){ await dbApi.doc('people/'+p.id).delete(); }
-      for(const n of names){ await dbApi.collection('people').add({name:n}); }
-    } else {
-      people = names.map(name => ({id: uid(), name}));
-      savePeopleLocal(people); renderPeople(); renderStats();
-    }
+    if(p) await savePairs(pairs.filter(pr => pr.a!==p.name && pr.b!==p.name));
   }
   async function saveScheduleDoc(period){
     if(dbApi){ await dbApi.collection('schedules').add(period); }
@@ -377,20 +451,28 @@
   async function startDbMode(){
     setSyncNote('Dati sincronizzati automaticamente su tutti i dispositivi.');
 
-    dbApi.collection('people').onSnapshot(async snap => {
-      people = snap.docs.map(d => ({id: d.id, name: (d.data()||{}).name || ''}));
-      if(!dbReady && people.length === 0){
-        // primo avvio: popola la squadra di prova, una volta sola
-        try{
-          const seedLock = await dbApi.doc('meta/seed').get();
-          if(!seedLock.exists){
-            await dbApi.doc('meta/seed').set({seeded:true, at:Date.now()});
-            const names = randomNames(20);
-            for(const n of names){ await dbApi.collection('people').add({name:n}); }
-          }
-        }catch(e){}
+    // primo avvio con la squadra reale: sostituisce i nomi di prova
+    // (e i turni salvati con quei nomi) una volta sola
+    try{
+      const flag = await dbApi.doc('meta/team_v2').get();
+      if(!flag.exists){
+        await dbApi.doc('meta/team_v2').set({seeded:true, at:Date.now()});
+        const oldP = await dbApi.collection('people').get();
+        for(const d of oldP.docs){ await dbApi.doc('people/'+d.id).delete(); }
+        const oldS = await dbApi.collection('schedules').get();
+        for(const d of oldS.docs){ await dbApi.doc('schedules/'+d.id).delete(); }
+        for(const [name,region,province] of SEED_TEAM){
+          await dbApi.collection('people').add({name, region, province});
+        }
       }
-      renderPeople(); renderStats(); renderResultsIfDraft();
+    }catch(e){ console.warn('seed error', e); }
+
+    dbApi.collection('people').onSnapshot(snap => {
+      people = snap.docs.map(d => {
+        const x = d.data() || {};
+        return {id: d.id, name: x.name || '', region: x.region || '', province: x.province || ''};
+      }).sort((a,b) => 0);
+      renderPeople(); renderRules(); renderStats(); renderResultsIfDraft();
     }, err => { console.warn('people snapshot error', err); });
 
     dbApi.collection('schedules').onSnapshot(snap => {
@@ -398,6 +480,11 @@
       dbReady = true;
       renderStats(); renderHistory();
     }, err => { console.warn('schedules snapshot error', err); });
+
+    dbApi.doc('meta/rules').onSnapshot(snap => {
+      pairs = (snap.exists && snap.data() && Array.isArray(snap.data().pairs)) ? snap.data().pairs : [];
+      renderRules();
+    }, err => { console.warn('rules snapshot error', err); });
   }
 
   function renderResultsIfDraft(){
@@ -529,6 +616,49 @@
     return set;
   }
 
+  // ---------- vincoli: regione, provincia, coppie vietate ----------
+  const MAX_PER_REGION = 4;     // al massimo 4 persone della stessa regione per turno
+  const FIRST_SATURDAY_SIZE = 5; // persone nel primo sabato lavorativo di ogni mese
+  const MAX_PER_PROVINCE = 1;   // al massimo 1 persona per provincia per turno
+  const norm = v => (v||'').trim().toLowerCase();
+
+  function buildInfo(){
+    const info = {};
+    people.forEach(p => { info[p.name] = {region: norm(p.region), province: norm(p.province)}; });
+    return info;
+  }
+  function buildPairSet(){
+    const set = new Set();
+    pairs.forEach(pr => { set.add(pr.a+'|'+pr.b); set.add(pr.b+'|'+pr.a); });
+    return set;
+  }
+  // scorre i candidati in ordine di preferenza e prende solo quelli compatibili
+  // con chi è già stato scelto per quel sabato
+  function pickCompatible(sortedNames, n, info, pairSet){
+    const chosen = [], regionCount = {}, provinceCount = {};
+    for(const name of sortedNames){
+      if(chosen.length >= n) break;
+      const inf = info[name] || {region:'', province:''};
+      if(inf.province && (provinceCount[inf.province]||0) >= MAX_PER_PROVINCE) continue;
+      if(inf.region && (regionCount[inf.region]||0) >= MAX_PER_REGION) continue;
+      if(chosen.some(c => pairSet.has(c+'|'+name))) continue;
+      chosen.push(name);
+      if(inf.province) provinceCount[inf.province] = (provinceCount[inf.province]||0) + 1;
+      if(inf.region) regionCount[inf.region] = (regionCount[inf.region]||0) + 1;
+    }
+    return chosen;
+  }
+  // motivi per cui aggiungere `name` a un turno già composto violerebbe una regola
+  function conflictReasons(name, currentNames){
+    const info = buildInfo(), pairSet = buildPairSet();
+    const inf = info[name] || {region:'', province:''};
+    const reasons = [];
+    if(inf.province && currentNames.some(c => (info[c]||{}).province === inf.province)) reasons.push('stessa provincia');
+    if(inf.region && currentNames.filter(c => (info[c]||{}).region === inf.region).length >= MAX_PER_REGION) reasons.push('troppi della stessa regione');
+    if(currentNames.some(c => pairSet.has(c+'|'+name))) reasons.push('non devono stare insieme');
+    return reasons;
+  }
+
   // ---------- generation with fairness ----------
   function generateDraftOnce(year, startMonth, min, max){
     const {saturdays, skipped} = getSaturdaysForQuarter(year, startMonth);
@@ -550,13 +680,17 @@
     });
 
     const lastIdx = saturdays.length - 1;
-    let relaxedMonth = false, relaxedConsecutive = false, relaxedPosition = false, positionRepeatCost = 0;
+    let relaxedMonth = false, relaxedConsecutive = false, relaxedPosition = false, positionRepeatCost = 0, underfilled = 0;
+    const info = buildInfo();
+    const pairSet = buildPairSet();
     const boundaryExclude = saturdays.length ? peopleOnPrecedingSavedSaturday(saturdays[0]) : new Set();
 
     const result = [];
     for(let idx=0; idx<saturdays.length; idx++){
       const iso = saturdays[idx];
-      const size = (min===max) ? min : (min + Math.floor(Math.random()*(max-min+1)));
+      // il primo sabato lavorativo di ogni mese ha sempre 5 persone
+      const isFirstOfMonth = idx === 0 || monthKey(saturdays[idx-1]) !== monthKey(iso);
+      const size = isFirstOfMonth ? FIRST_SATURDAY_SIZE : ((min===max) ? min : (min + Math.floor(Math.random()*(max-min+1))));
       const n = Math.min(size, people.length);
       const isFirst = idx === 0;
       const isLast = idx === lastIdx;
@@ -565,46 +699,46 @@
       const prevWeekPeople = idx === 0 ? boundaryExclude : new Set(result[idx-1].people);
       const mOrd = saturdayOrdinalInMonth(iso);
 
-      // vincoli rigidi: niente stesso mese, niente sabato consecutivo
-      let pool = people.filter(p => !work[p.name].months.has(thisMonth) && !prevWeekPeople.has(p.name));
-      if(pool.length < n){
-        relaxedMonth = true;
-        pool = people.filter(p => !prevWeekPeople.has(p.name));
-      }
-      if(pool.length < n){
-        relaxedConsecutive = true;
-        pool = people.slice();
-      }
-
       // rotazione: chi ha occupato MENO VOLTE questa esatta posizione nel mese
-      // di calendario (es. "primo sabato del mese", "ultimo sabato del mese")
-      // va scelto per primo. Il peso è enorme apposta, così questo criterio
-      // domina su tutto il resto e nessuno rifà "il primo sabato" finché non
-      // lo ha fatto anche chiunque altro fosse disponibile quella settimana —
-      // ma se il pool ammissibile è troppo piccolo per bastare, si scivola
-      // gradualmente verso chi ha una volta di più, invece di abbandonare del
-      // tutto il criterio.
+      // di calendario (es. "primo sabato del mese") va scelto per primo.
       const posCount = p => (work[p.name].monthPosStart[mOrd.ordStart]||0) + (work[p.name].monthPosEnd[mOrd.ordEnd]||0);
+
+      const scoreList = pool => pool.map(p => {
+        const w = work[p.name];
+        let score = posCount(p) * 1000;
+        score += w.total * 10;
+        score += (w.posStart[idx] || 0) * 3;
+        score += (w.posEnd[idxEnd] || 0) * 3;
+        score += Math.random()*3;
+        return {name:p.name, score};
+      }).sort((a,b) => a.score - b.score).map(s => s.name);
+
+      // livelli di ammissibilità, dal più rigido al più largo:
+      // 0) niente stesso mese e niente sabato consecutivo
+      // 1) si accetta lo stesso mese (mai sabati consecutivi)
+      // 2) si accetta anche il sabato consecutivo
+      // I vincoli di regione, provincia e coppie vietate valgono SEMPRE.
+      const levels = [
+        people.filter(p => !work[p.name].months.has(thisMonth) && !prevWeekPeople.has(p.name)),
+        people.filter(p => !prevWeekPeople.has(p.name)),
+        people.slice()
+      ];
+      let chosen = [], usedLevel = 0;
+      for(let L=0; L<levels.length; L++){
+        usedLevel = L;
+        chosen = pickCompatible(scoreList(levels[L]), n, info, pairSet);
+        if(chosen.length >= n) break;
+      }
+      if(usedLevel >= 1) relaxedMonth = true;
+      if(usedLevel >= 2) relaxedConsecutive = true;
+      if(chosen.length < n) underfilled++;
+
+      const pool = levels[usedLevel];
       if(pool.length > 0){
         const minPos = Math.min(...pool.map(posCount));
         const minGroupSize = pool.filter(p => posCount(p) === minPos).length;
         if(minGroupSize < n) relaxedPosition = true;
       }
-
-      const scored = pool.map(p => {
-        const w = work[p.name];
-        let score = posCount(p) * 1000;
-        // Penalità sul carico totale: chi ha fatto più turni in assoluto
-        // viene scelto meno spesso, a parità di rotazione mensile.
-        score += w.total * 10;
-        // Penalità di posizione dentro al trimestre (spareggio secondario).
-        score += (w.posStart[idx] || 0) * 3;
-        score += (w.posEnd[idxEnd] || 0) * 3;
-        score += Math.random()*3;
-        return {name:p.name, score};
-      });
-      scored.sort((a,b) => a.score - b.score);
-      const chosen = scored.slice(0, n).map(s => s.name);
 
       // quante volte la persona scelta ha GIA' occupato questa esatta posizione
       // (prima di questa assegnazione): 0 = rotazione perfetta per questo slot.
@@ -629,7 +763,7 @@
       result.push({date: iso, people: chosen});
     }
 
-    return {year, startMonth, saturdays: result, skipped, relaxedMonth, relaxedConsecutive, relaxedPosition, positionRepeatCost};
+    return {year, startMonth, saturdays: result, skipped, relaxedMonth, relaxedConsecutive, relaxedPosition, positionRepeatCost, underfilled};
   }
 
   // La generazione greedy va sabato per sabato, quindi un ordine sfortunato
@@ -644,7 +778,7 @@
     for(let i=0; i<attempts; i++){
       const d = generateDraftOnce(year, startMonth, min, max);
       if(!best){ best = d; continue; }
-      const scoreOf = x => (x.relaxedConsecutive?1e8:0) + (x.relaxedMonth?1e5:0) + x.positionRepeatCost;
+      const scoreOf = x => x.underfilled*1e10 + (x.relaxedConsecutive?1e8:0) + (x.relaxedMonth?1e5:0) + x.positionRepeatCost;
       if(scoreOf(d) < scoreOf(best)) best = d;
       if(scoreOf(best) === 0) break; // rotazione perfetta: non serve cercare oltre
     }
@@ -659,40 +793,83 @@
     peopleListEl.innerHTML = '';
     people.forEach(p => {
       const li = document.createElement('li');
-      const input = document.createElement('input');
-      input.type = 'text';
-      input.value = p.name;
-      input.addEventListener('change', () => {
-        const oldName = p.name;
-        const newName = input.value.trim() || oldName;
-        if(newName !== oldName) renamePersonDoc(p.id, oldName, newName);
-      });
+      const mk = (value, placeholder, onChange) => {
+        const input = document.createElement('input');
+        input.type = 'text'; input.value = value || ''; input.placeholder = placeholder;
+        input.addEventListener('change', () => onChange(input.value.trim(), input));
+        return input;
+      };
+      li.appendChild(mk(p.name, 'Nome e cognome', (v, input) => {
+        const newName = v || p.name;
+        input.value = newName;
+        if(newName !== p.name) renamePersonDoc(p.id, p.name, newName);
+      }));
+      li.appendChild(mk(p.region, 'Regione', v => { p.region = v; updatePersonField(p.id, 'region', v); }));
+      li.appendChild(mk(p.province, 'Provincia', v => { p.province = v; updatePersonField(p.id, 'province', v); }));
       const del = document.createElement('button');
       del.textContent = '×';
       del.title = 'Rimuovi';
       del.addEventListener('click', () => { deletePersonDoc(p.id); });
-      li.appendChild(input);
       li.appendChild(del);
       peopleListEl.appendChild(li);
     });
     teamCount.textContent = people.length + ' persone';
   }
 
+  const pairsListEl = document.getElementById('pairs-list');
+  const pairA = document.getElementById('pair-a');
+  const pairB = document.getElementById('pair-b');
+  function renderRules(){
+    const names = people.map(p => p.name);
+    [pairA, pairB].forEach((sel, i) => {
+      const keep = sel.value;
+      sel.innerHTML = '';
+      const o = document.createElement('option');
+      o.value = ''; o.textContent = i === 0 ? 'Prima persona…' : 'Seconda persona…';
+      sel.appendChild(o);
+      names.forEach(n => { const op = document.createElement('option'); op.value = n; op.textContent = n; sel.appendChild(op); });
+      if(names.includes(keep)) sel.value = keep;
+    });
+    pairsListEl.innerHTML = '';
+    if(!pairs.length){
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'Nessuna coppia: tutti possono stare insieme.';
+      pairsListEl.appendChild(li);
+    }
+    pairs.forEach((pr, i) => {
+      const li = document.createElement('li');
+      const span = document.createElement('span');
+      span.textContent = pr.a + ' e ' + pr.b;
+      const del = document.createElement('button');
+      del.textContent = '×'; del.title = 'Rimuovi';
+      del.addEventListener('click', () => { savePairs(pairs.filter((_, j) => j !== i)); });
+      li.appendChild(span); li.appendChild(del);
+      pairsListEl.appendChild(li);
+    });
+    document.getElementById('rules-count').textContent = pairs.length ? pairs.length + (pairs.length === 1 ? ' coppia' : ' coppie') : '';
+  }
+  document.getElementById('add-pair').addEventListener('click', () => {
+    const a = pairA.value, b = pairB.value;
+    if(!a || !b){ toast('Scegli due persone'); return; }
+    if(a === b){ toast('Scegli due persone diverse'); return; }
+    if(pairs.some(pr => (pr.a===a && pr.b===b) || (pr.a===b && pr.b===a))){ toast('Questa coppia c\'è già'); return; }
+    pairA.value = ''; pairB.value = '';
+    savePairs(pairs.concat([{a, b}]));
+  });
+
   document.getElementById('add-person').addEventListener('click', () => {
-    const input = document.getElementById('new-person');
-    const name = input.value.trim();
+    const name = document.getElementById('new-person').value.trim();
+    const region = document.getElementById('new-region').value.trim();
+    const province = document.getElementById('new-province').value.trim();
     if(!name) return;
-    addPerson(name);
-    input.value = '';
+    addPerson(name, region, province);
+    ['new-person','new-region','new-province'].forEach(id => document.getElementById(id).value = '');
   });
-  document.getElementById('new-person').addEventListener('keydown', e => {
-    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('add-person').click(); }
-  });
-  document.getElementById('shuffle-names').addEventListener('click', async () => {
-    const n = Math.max(people.length, 1);
-    const names = randomNames(n);
-    await replaceAllPeople(names);
-    toast('Nomi di prova rigenerati');
+  ['new-person','new-region','new-province'].forEach(id => {
+    document.getElementById(id).addEventListener('keydown', e => {
+      if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('add-person').click(); }
+    });
   });
 
   // form defaults
@@ -781,6 +958,7 @@
         const reasons = [];
         if(sameMonthPeople.has(n) || adjacentPeople.has(n)) reasons.push('stesso mese o sabato adiacente');
         if(samePositionPeople.has(n)) reasons.push('ha già fatto questa posizione del mese');
+        conflictReasons(n, s.people).forEach(r => reasons.push(r));
         const o = document.createElement('option');
         o.value = n;
         o.textContent = n + (reasons.length ? ' (' + reasons.join(', ') + ')' : '');
@@ -818,6 +996,9 @@
     if(draft.skipped.length){
       const names = draft.skipped.map(s => (s.name || 'festività') + ' (' + fmtDate(s.iso).replace('sabato ','') + ')').join(', ');
       genNotice.innerHTML += '<p class="notice skip">Sabati non lavorativi esclusi: ' + names + '.</p>';
+    }
+    if(draft.underfilled){
+      genNotice.innerHTML += '<p class="notice skip">In ' + draft.underfilled + (draft.underfilled === 1 ? ' turno' : ' turni') + ' non è stato possibile arrivare al numero di persone richiesto rispettando regione, provincia e coppie vietate: ci sono meno persone del previsto.</p>';
     }
     if(draft.relaxedConsecutive){
       genNotice.innerHTML += '<p class="notice skip">La squadra è troppo piccola per evitare del tutto sabati consecutivi e ripetizioni nello stesso mese: controlla i turni qui sotto.</p>';
