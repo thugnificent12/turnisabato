@@ -124,6 +124,24 @@
     display:flex; align-items:center; gap:5px; background:var(--paper);
     border:1px solid var(--line); border-radius:16px; padding:4px 6px 4px 11px; font-size:.83rem;
   }
+  .chip{ border-radius:12px; align-items:center; }
+  table.ledger td:last-child{ width:100%; }
+  @media (max-width:640px){
+    table.ledger, table.ledger tbody, table.ledger tr, table.ledger td{ display:block; width:100%; }
+    table.ledger tr{ border-bottom:1px solid var(--line); padding:8px 0; }
+    table.ledger td{ border-bottom:none; padding:4px 8px; }
+    table.ledger td.date-cell{ white-space:normal; }
+    table.ledger tr:last-child{ border-bottom:none; }
+    .date-cell .badge{ display:inline-block; margin-left:8px; }
+    .add-slot select{ width:100%; }
+  }
+  .chip .who{ display:flex; flex-direction:column; line-height:1.25; }
+  .chip .meta{ color:var(--ink-soft); font-size:.72rem; }
+  .period-detail{ margin:6px 0 4px; padding:8px 12px; border-left:2px solid var(--line); font-size:.82rem; display:none; }
+  .period-detail.open{ display:block; }
+  .period-detail p{ margin:0 0 6px; }
+  .period-detail .meta{ color:var(--ink-soft); }
+  .period-item .btns{ display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end; }
   .chip button{ border:none; background:transparent; color:var(--ink-soft); padding:1px 5px; border-radius:50%; font-size:.8rem; }
   .chip button:hover{ color:var(--danger); }
   .add-slot{ display:flex; gap:5px; margin-top:6px; }
@@ -160,7 +178,7 @@
 
   <section id="team-section">
     <h2>Squadra <span class="count" id="team-count"></span></h2>
-    <p class="hint">In ogni turno al massimo 4 persone della stessa regione e una sola persona per provincia. Puoi modificare nome, regione e provincia direttamente qui sotto.</p>
+    <p class="hint">In ogni turno ogni regione presente ha da 2 a 3 persone (la Basilicata può stare anche da sola, perché le sue persone sono della stessa provincia) e c'è una sola persona per provincia. Puoi modificare nome, regione e provincia direttamente qui sotto.</p>
     <ul id="people-list"></ul>
     <div class="row add-person-row">
       <input type="text" id="new-person" placeholder="Nome e cognome">
@@ -193,7 +211,7 @@
       </label>
       <label class="full">Persone per turno
         <div class="minmax">
-          <input type="number" id="f-min" min="1" max="20" value="3"> – 
+          <input type="number" id="f-min" min="1" max="20" value="4"> – 
           <input type="number" id="f-max" min="1" max="20" value="5">
           <span style="color:var(--ink-soft); font-size:.8rem;">a sabato (il primo sabato di ogni mese sempre 5)</span>
         </div>
@@ -211,6 +229,7 @@
     <table class="ledger"><tbody id="results-body"></tbody></table>
     <div class="actions-row">
       <button class="primary" id="save-period">Salva questo periodo</button>
+      <button class="ghost" id="export-draft">Esporta in Excel</button>
       <button class="ghost" id="discard-period">Scarta</button>
     </div>
   </section>
@@ -617,7 +636,8 @@
   }
 
   // ---------- vincoli: regione, provincia, coppie vietate ----------
-  const MAX_PER_REGION = 4;     // al massimo 4 persone della stessa regione per turno
+  const MIN_PER_REGION = 2;     // ogni regione presente in un turno ha almeno 2 persone...
+  const MAX_PER_REGION = 3;     // ...e al massimo 3
   const FIRST_SATURDAY_SIZE = 5; // persone nel primo sabato lavorativo di ogni mese
   const MAX_PER_PROVINCE = 1;   // al massimo 1 persona per provincia per turno
   const norm = v => (v||'').trim().toLowerCase();
@@ -647,6 +667,64 @@
       if(inf.region) regionCount[inf.region] = (regionCount[inf.region]||0) + 1;
     }
     return chosen;
+  }
+  // regioni che non possono mai avere 2 persone nello stesso turno perché tutte
+  // le loro persone sono della stessa provincia (es. due persone di Potenza):
+  // per loro il minimo di 2 non si applica e possono stare anche da sole
+  function exemptRegions(info){
+    const provs = {};
+    Object.values(info).forEach(i => { (provs[i.region] = provs[i.region] || new Set()).add(i.province || '#'+Math.random()); });
+    const ex = new Set();
+    Object.keys(provs).forEach(r => { if(!r || provs[r].size < MIN_PER_REGION) ex.add(r); });
+    return ex;
+  }
+
+  // compone un turno da n persone in cui ogni regione presente ha da 2 a 3
+  // persone (1 solo per le regioni esenti), con una sola persona per provincia
+  // e senza coppie vietate. Fra tutte le combinazioni valide sceglie quella con
+  // il punteggio complessivo migliore. `scored` = [{name, score}] ordinato.
+  function pickShift(scored, n, info, pairSet, exempt){
+    const byRegion = {};
+    scored.forEach(s => { const r = (info[s.name]||{}).region || ''; (byRegion[r] = byRegion[r] || []).push(s); });
+    const regions = Object.keys(byRegion).map(r => {
+      const sizes = exempt.has(r) ? [1,2,3] : [MIN_PER_REGION, MAX_PER_REGION];
+      const groups = {};
+      for(const k of sizes){
+        const names = [], provs = new Set(); let cost = 0;
+        for(const c of byRegion[r]){
+          if(names.length >= k) break;
+          const pr = (info[c.name]||{}).province;
+          if(pr && provs.has(pr)) continue;
+          if(names.some(x => pairSet.has(x+'|'+c.name))) continue;
+          names.push(c.name); cost += c.score; if(pr) provs.add(pr);
+        }
+        if(names.length === k) groups[k] = {names, cost};
+      }
+      return {region:r, groups};
+    });
+    let best = null;
+    const rec = (i, remaining, acc, cost) => {
+      if(best && cost >= best.cost) return;
+      if(remaining === 0){
+        const all = acc.flatMap(g => g.names);
+        const provSeen = new Set();
+        for(const nm of all){
+          const pr = (info[nm]||{}).province;
+          if(pr){ if(provSeen.has(pr)) return; provSeen.add(pr); }
+        }
+        for(let a=0;a<all.length;a++) for(let b=a+1;b<all.length;b++) if(pairSet.has(all[a]+'|'+all[b])) return;
+        best = {names: all, cost};
+        return;
+      }
+      if(i >= regions.length) return;
+      rec(i+1, remaining, acc, cost);
+      Object.keys(regions[i].groups).forEach(k => {
+        k = +k;
+        if(k <= remaining) rec(i+1, remaining-k, acc.concat([regions[i].groups[k]]), cost + regions[i].groups[k].cost);
+      });
+    };
+    rec(0, n, [], 0);
+    return best ? best.names : [];
   }
   // motivi per cui aggiungere `name` a un turno già composto violerebbe una regola
   function conflictReasons(name, currentNames){
@@ -683,6 +761,8 @@
     let relaxedMonth = false, relaxedConsecutive = false, relaxedPosition = false, positionRepeatCost = 0, underfilled = 0;
     const info = buildInfo();
     const pairSet = buildPairSet();
+    const exempt = exemptRegions(info);
+    let regionRuleBroken = 0;
     const boundaryExclude = saturdays.length ? peopleOnPrecedingSavedSaturday(saturdays[0]) : new Set();
 
     const result = [];
@@ -711,7 +791,7 @@
         score += (w.posEnd[idxEnd] || 0) * 3;
         score += Math.random()*3;
         return {name:p.name, score};
-      }).sort((a,b) => a.score - b.score).map(s => s.name);
+      }).sort((a,b) => a.score - b.score);
 
       // livelli di ammissibilità, dal più rigido al più largo:
       // 0) niente stesso mese e niente sabato consecutivo
@@ -726,8 +806,15 @@
       let chosen = [], usedLevel = 0;
       for(let L=0; L<levels.length; L++){
         usedLevel = L;
-        chosen = pickCompatible(scoreList(levels[L]), n, info, pairSet);
+        chosen = pickShift(scoreList(levels[L]), n, info, pairSet, exempt);
         if(chosen.length >= n) break;
+      }
+      if(chosen.length < n){
+        // nessuna combinazione rispetta 2-3 per regione: si ripiega sulla scelta
+        // semplice (max 3 per regione, provincia e coppie sempre rispettate)
+        regionRuleBroken++;
+        usedLevel = levels.length - 1;
+        chosen = pickCompatible(scoreList(levels[levels.length-1]).map(s => s.name), n, info, pairSet);
       }
       if(usedLevel >= 1) relaxedMonth = true;
       if(usedLevel >= 2) relaxedConsecutive = true;
@@ -763,7 +850,7 @@
       result.push({date: iso, people: chosen});
     }
 
-    return {year, startMonth, saturdays: result, skipped, relaxedMonth, relaxedConsecutive, relaxedPosition, positionRepeatCost, underfilled};
+    return {year, startMonth, saturdays: result, skipped, relaxedMonth, relaxedConsecutive, relaxedPosition, positionRepeatCost, underfilled, regionRuleBroken};
   }
 
   // La generazione greedy va sabato per sabato, quindi un ordine sfortunato
@@ -778,7 +865,7 @@
     for(let i=0; i<attempts; i++){
       const d = generateDraftOnce(year, startMonth, min, max);
       if(!best){ best = d; continue; }
-      const scoreOf = x => x.underfilled*1e10 + (x.relaxedConsecutive?1e8:0) + (x.relaxedMonth?1e5:0) + x.positionRepeatCost;
+      const scoreOf = x => x.underfilled*1e10 + x.regionRuleBroken*1e9 + (x.relaxedConsecutive?1e8:0) + (x.relaxedMonth?1e5:0) + x.positionRepeatCost;
       if(scoreOf(d) < scoreOf(best)) best = d;
       if(scoreOf(best) === 0) break; // rotazione perfetta: non serve cercare oltre
     }
@@ -911,7 +998,14 @@
       s.people.forEach(name => {
         const chip = document.createElement('span');
         chip.className = 'chip';
-        chip.textContent = name;
+        const who = document.createElement('span');
+        who.className = 'who';
+        const nm = document.createElement('span'); nm.textContent = name;
+        who.appendChild(nm);
+        const pr = people.find(x => x.name === name);
+        const metaTxt = pr ? [pr.region, pr.province].filter(Boolean).join(', ') : '';
+        if(metaTxt){ const mt = document.createElement('span'); mt.className = 'meta'; mt.textContent = metaTxt; who.appendChild(mt); }
+        chip.appendChild(who);
         const rm = document.createElement('button');
         rm.textContent = '×';
         rm.addEventListener('click', () => {
@@ -997,6 +1091,9 @@
       const names = draft.skipped.map(s => (s.name || 'festività') + ' (' + fmtDate(s.iso).replace('sabato ','') + ')').join(', ');
       genNotice.innerHTML += '<p class="notice skip">Sabati non lavorativi esclusi: ' + names + '.</p>';
     }
+    if(draft.regionRuleBroken){
+      genNotice.innerHTML += '<p class="notice skip">In ' + draft.regionRuleBroken + (draft.regionRuleBroken === 1 ? ' turno' : ' turni') + ' non è stato possibile avere da 2 a 3 persone per ogni regione: controlla i turni qui sotto.</p>';
+    }
     if(draft.underfilled){
       genNotice.innerHTML += '<p class="notice skip">In ' + draft.underfilled + (draft.underfilled === 1 ? ' turno' : ' turni') + ' non è stato possibile arrivare al numero di persone richiesto rispettando regione, provincia e coppie vietate: ci sono meno persone del previsto.</p>';
     }
@@ -1063,24 +1160,183 @@
 
   const historySection = document.getElementById('history-section');
   const periodsList = document.getElementById('periods-list');
+  function periodTitle(period){
+    const m1 = MESI[period.startMonth-1];
+    return m1.charAt(0).toUpperCase()+m1.slice(1) + '–' + MESI[(period.startMonth-1+2)%12] + ' ' + period.year;
+  }
+  function personMeta(name){
+    const pr = people.find(x => x.name === name);
+    const t = pr ? [pr.region, pr.province].filter(Boolean).join(', ') : '';
+    return t;
+  }
   function renderHistory(){
     if(schedules.length===0){ historySection.style.display='none'; return; }
     historySection.style.display = 'block';
     periodsList.innerHTML = '';
     schedules.slice().reverse().forEach(period => {
+      const wrap = document.createElement('div');
       const div = document.createElement('div');
       div.className = 'period-item';
       const label = document.createElement('span');
-      label.textContent = MESI[period.startMonth-1].charAt(0).toUpperCase()+MESI[period.startMonth-1].slice(1) + '–' + MESI[(period.startMonth-1+2)%12] + ' ' + period.year + ' · ' + period.saturdays.length + ' sabati';
+      label.textContent = periodTitle(period) + ' · ' + period.saturdays.length + ' sabati';
+      const btns = document.createElement('span');
+      btns.className = 'btns';
+      const detail = document.createElement('div');
+      detail.className = 'period-detail';
+      period.saturdays.forEach(sat => {
+        const pEl = document.createElement('p');
+        const strong = document.createElement('strong');
+        strong.textContent = fmtDate(sat.date) + ': ';
+        pEl.appendChild(strong);
+        sat.people.forEach((n, i) => {
+          const m = personMeta(n);
+          pEl.appendChild(document.createTextNode(n));
+          if(m){ const ms = document.createElement('span'); ms.className = 'meta'; ms.textContent = ' (' + m + ')'; pEl.appendChild(ms); }
+          if(i < sat.people.length-1) pEl.appendChild(document.createTextNode('; '));
+        });
+        detail.appendChild(pEl);
+      });
+      const show = document.createElement('button');
+      show.className = 'small ghost'; show.textContent = 'Mostra';
+      show.addEventListener('click', () => {
+        const open = detail.classList.toggle('open');
+        show.textContent = open ? 'Nascondi' : 'Mostra';
+      });
+      const exp = document.createElement('button');
+      exp.className = 'small ghost'; exp.textContent = 'Esporta in Excel';
+      exp.addEventListener('click', () => exportToExcel(period.saturdays, periodTitle(period)));
       const del = document.createElement('button');
       del.className = 'small danger-text';
       del.textContent = 'Elimina';
       del.addEventListener('click', () => { deleteScheduleDoc(period.id); });
+      btns.appendChild(show); btns.appendChild(exp); btns.appendChild(del);
       div.appendChild(label);
-      div.appendChild(del);
-      periodsList.appendChild(div);
+      div.appendChild(btns);
+      wrap.appendChild(div);
+      wrap.appendChild(detail);
+      periodsList.appendChild(wrap);
     });
   }
+
+  // ---------- esportazione in Excel ----------
+  function exportTables(saturdays){
+    const info = {}; people.forEach(p => { info[p.name] = p; });
+    const fmt = iso => iso.slice(8,10)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4);
+    const detail = [['Data','Sabato del mese','Nome','Regione','Provincia']];
+    const summary = [['Data','Sabato del mese','Numero persone','Persone']];
+    saturdays.forEach(s => {
+      const label = saturdayOrdinalInMonth(s.date).ordStart + '° sabato';
+      s.people.forEach(n => {
+        const p = info[n] || {};
+        detail.push([fmt(s.date), label, n, p.region || '', p.province || '']);
+      });
+      summary.push([fmt(s.date), label, s.people.length, s.people.join(', ')]);
+    });
+    return {detail, summary};
+  }
+
+  async function saveFile(filename, data){
+    let dl = null;
+    try{ if(window.claude && window.claude.use) dl = await window.claude.use('downloads'); }catch(e){}
+    if(dl){
+      try{ await dl.save({filename, data}); return true; }
+      catch(e){ if(e && e.code === 'declined') return false; }
+    }
+    const blob = data instanceof Blob ? data : new Blob([data]);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    return true;
+  }
+
+  // --- generatore .xlsx minimale, senza librerie esterne (zip "store" + XML) ---
+  const CRC_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c = (c&1) ? (0xEDB88320 ^ (c>>>1)) : (c>>>1); t[n]=c>>>0; }
+    return t;
+  })();
+  function crc32(bytes){
+    let c = 0xFFFFFFFF;
+    for(let i=0;i<bytes.length;i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+    return (c ^ 0xFFFFFFFF) >>> 0;
+  }
+  function makeZip(files){
+    const enc = new TextEncoder();
+    const chunks = [], central = [];
+    let offset = 0;
+    const u16 = v => [v & 255, (v>>>8) & 255];
+    const u32 = v => [v & 255, (v>>>8) & 255, (v>>>16) & 255, (v>>>24) & 255];
+    files.forEach(f => {
+      const name = enc.encode(f.name), data = enc.encode(f.data), crc = crc32(data);
+      const local = new Uint8Array([0x50,0x4b,0x03,0x04, ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21),
+        ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(name.length), ...u16(0)]);
+      chunks.push(local, name, data);
+      central.push({name, crc, size:data.length, offset});
+      offset += local.length + name.length + data.length;
+    });
+    let centralSize = 0;
+    central.forEach(c => {
+      const hdr = new Uint8Array([0x50,0x4b,0x01,0x02, ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21),
+        ...u32(c.crc), ...u32(c.size), ...u32(c.size), ...u16(c.name.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(c.offset)]);
+      chunks.push(hdr, c.name);
+      centralSize += hdr.length + c.name.length;
+    });
+    chunks.push(new Uint8Array([0x50,0x4b,0x05,0x06, ...u16(0), ...u16(0), ...u16(central.length), ...u16(central.length),
+      ...u32(centralSize), ...u32(offset), ...u16(0)]));
+    const total = chunks.reduce((n,c) => n + c.length, 0);
+    const out = new Uint8Array(total);
+    let pos = 0;
+    chunks.forEach(c => { out.set(c, pos); pos += c.length; });
+    return out;
+  }
+  const xmlEsc = v => String(v).replace(/[&<>"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[ch]));
+  function colLetter(i){ return String.fromCharCode(65 + i); }
+  function sheetXml(rows, widths){
+    let x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">';
+    x += '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>';
+    x += '<cols>' + widths.map((w,i) => '<col min="'+(i+1)+'" max="'+(i+1)+'" width="'+w+'" customWidth="1"/>').join('') + '</cols><sheetData>';
+    rows.forEach((row, r) => {
+      x += '<row r="'+(r+1)+'">';
+      row.forEach((val, c) => {
+        const ref = colLetter(c) + (r+1), st = r === 0 ? ' s="1"' : '';
+        if(typeof val === 'number') x += '<c r="'+ref+'"'+st+'><v>'+val+'</v></c>';
+        else x += '<c r="'+ref+'"'+st+' t="inlineStr"><is><t xml:space="preserve">'+xmlEsc(val)+'</t></is></c>';
+      });
+      x += '</row>';
+    });
+    return x + '</sheetData></worksheet>';
+  }
+  function buildXlsx(sheets){
+    const head = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+    const files = [
+      {name:'[Content_Types].xml', data: head + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' + sheets.map((_,i) => '<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('') + '</Types>'},
+      {name:'_rels/.rels', data: head + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'},
+      {name:'xl/workbook.xml', data: head + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>' + sheets.map((sh,i) => '<sheet name="'+xmlEsc(sh.name)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('') + '</sheets></workbook>'},
+      {name:'xl/_rels/workbook.xml.rels', data: head + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' + sheets.map((_,i) => '<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>').join('') + '<Relationship Id="rId'+(sheets.length+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'},
+      {name:'xl/styles.xml', data: head + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>'}
+    ];
+    sheets.forEach((sh,i) => files.push({name:'xl/worksheets/sheet'+(i+1)+'.xml', data: sheetXml(sh.rows, sh.widths)}));
+    return makeZip(files);
+  }
+
+  async function exportToExcel(saturdays, title){
+    if(!saturdays || !saturdays.length){ toast('Non ci sono turni da esportare'); return; }
+    const {detail, summary} = exportTables(saturdays);
+    const base = 'turni-sabato_' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    try{
+      const bytes = buildXlsx([
+        {name:'Turni', rows:detail, widths:[12,15,26,14,18]},
+        {name:'Riepilogo', rows:summary, widths:[12,15,16,90]}
+      ]);
+      const ok = await saveFile(base + '.xlsx', new Blob([bytes], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+      if(ok) toast('File Excel pronto');
+    }catch(e){ console.warn(e); toast('Esportazione non riuscita'); }
+  }
+  document.getElementById('export-draft').addEventListener('click', () => {
+    if(draft) exportToExcel(draft.saturdays, periodLabel.textContent || 'turni');
+  });
 
   document.getElementById('reset-all').addEventListener('click', async () => {
     if(!confirm('Cancellare tutti i periodi salvati e le statistiche? La squadra resta invariata.')) return;
