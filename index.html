@@ -213,7 +213,7 @@
         <div class="minmax">
           <input type="number" id="f-min" min="1" max="20" value="5"> – 
           <input type="number" id="f-max" min="1" max="20" value="6">
-          <span style="color:var(--ink-soft); font-size:.8rem;">il massimo vale anche in generazione: 2 Calabria, 2 Campania, 1 Puglia; nel sabato della Basilicata, se il massimo è 5, una di Calabria o Campania scende a 1 (con 6 restano tutti)</span>
+          <span style="color:var(--ink-soft); font-size:.8rem;">a sabato. Il primo sabato di ogni mese ha sempre il massimo di persone.</span>
         </div>
       </label>
       <div class="full">
@@ -646,25 +646,36 @@
     people.forEach(p => { info[p.name] = {region: norm(p.region), province: norm(p.province)}; });
     return info;
   }
-  // composizione desiderata di ogni turno: 2 Calabria, 2 Campania, 1 Puglia
-  // (la Basilicata arriva dal suo sabato fisso del mese). Il primo sabato del
-  // mese è rigido: 2 + 2 + (1 Puglia oppure 1 Basilicata). Negli altri sabati
-  // 3 per Calabria/Campania o 2 per Puglia sono ammessi solo se serve davvero
-  // (costano più di tutto il resto, tranne ripetere qualcuno nello stesso mese).
-  function pickByTargets(scored, isFirst, forced, info, pairSet, maxTotal){
-    const target = {calabria:2, campania:2, puglia:1};
-    const cap = isFirst ? {calabria:2, campania:2, puglia: forced.length ? 0 : 1}
-                        : {calabria:3, campania:3, puglia:2};
-    const fixedProv = new Set(forced.map(f => (info[f]||{}).province).filter(Boolean));
+  // compone un turno di esattamente N persone. Tutte le regioni presenti nel
+  // gruppo "normale" hanno almeno 1 persona; i posti oltre quelli minimi vanno
+  // alle regioni più numerose (metodo D'Hondt: con N=5 escono 2 Calabria,
+  // 2 Campania, 1 Puglia; con più posti salgono prima Calabria e Campania).
+  // `forced` = persone già decise (es. la Basilicata nel suo sabato del mese).
+  function pickByTargets(scored, N, forced, info, pairSet){
     const byRegion = {};
     scored.forEach(sc => { const r = (info[sc.name]||{}).region || ''; (byRegion[r] = byRegion[r] || []).push(sc); });
-    const regions = Object.keys(byRegion).map(r => {
-      const c = cap[r] === undefined ? 1 : cap[r];
-      const t = target[r] === undefined ? 1 : target[r];
+    const rnames = Object.keys(byRegion);
+    const M = N - forced.length;
+    if(M < rnames.length) return [];
+    const target = {};
+    rnames.forEach(r => target[r] = 1);
+    for(let extra = M - rnames.length; extra > 0; extra--){
+      let bestR = null, bestV = -1;
+      rnames.forEach(r => {
+        if(target[r] >= byRegion[r].length) return;
+        const v = byRegion[r].length / (target[r] + 1);
+        if(v > bestV){ bestV = v; bestR = r; }
+      });
+      if(!bestR) break;
+      target[bestR]++;
+    }
+    const fixedProv = new Set(forced.map(f => (info[f]||{}).province).filter(Boolean));
+    const regions = rnames.map(r => {
       const groups = {};
-      for(let k = 1; k <= c; k++){
+      const hiK = Math.min(byRegion[r].length, target[r] + 1);
+      for(let k = 1; k <= hiK; k++){
         const names = [], provs = new Set(fixedProv);
-        let cost = k < t ? (t-k)*1e5 : (k-t)*2e5;
+        let cost = Math.abs(k - target[r]) * 1e5;
         for(const x of byRegion[r]){
           if(names.length >= k) break;
           const pr = (info[x.name]||{}).province;
@@ -678,20 +689,23 @@
       return {groups};
     }).filter(g => Object.keys(g.groups).length > 0);
     let best = null;
-    const rec = (i, acc, cost) => {
+    const rec = (i, remaining, acc, cost) => {
       if(best && cost >= best.cost) return;
       if(i >= regions.length){
+        if(remaining !== 0) return;
         const all = forced.concat(acc.flatMap(g => g.names));
-        if(maxTotal && all.length > maxTotal) return;
         const seen = new Set();
         for(const nm of all){ const pr = (info[nm]||{}).province; if(pr){ if(seen.has(pr)) return; seen.add(pr); } }
         for(let x=0;x<all.length;x++) for(let y=x+1;y<all.length;y++) if(pairSet.has(all[x]+'|'+all[y])) return;
         best = {names: all, cost};
         return;
       }
-      Object.keys(regions[i].groups).forEach(k => rec(i+1, acc.concat([regions[i].groups[k]]), cost + regions[i].groups[k].cost));
+      Object.keys(regions[i].groups).forEach(k => {
+        k = +k;
+        if(k <= remaining) rec(i+1, remaining-k, acc.concat([regions[i].groups[k]]), cost + regions[i].groups[k].cost);
+      });
     };
-    rec(0, [], 0);
+    rec(0, M, [], 0);
     return best ? best.names : [];
   }
 
@@ -814,7 +828,7 @@
     let relaxedMonth = false, relaxedConsecutive = false, relaxedPosition = false, positionRepeatCost = 0, underfilled = 0;
     const info = buildInfo();
     const pairSet = buildPairSet();
-    let regionRuleBroken = 0;
+    let regionRuleBroken = 0, shrunk = 0;
     const boundaryExclude = saturdays.length ? peopleOnPrecedingSavedSaturday(saturdays[0]) : new Set();
 
     // regioni con pochissime persone (<= 2, es. Basilicata): ognuno lavora UN
@@ -858,7 +872,15 @@
       const iso = saturdays[idx];
       // il primo sabato lavorativo di ogni mese ha sempre 5 persone
       const isFirstOfMonth = idx === 0 || monthKey(saturdays[idx-1]) !== monthKey(iso);
-      const size = isFirstOfMonth ? FIRST_SATURDAY_SIZE : ((min===max) ? min : (min + Math.floor(Math.random()*(max-min+1))));
+      const wanted = isFirstOfMonth ? max : ((min===max) ? min : (min + Math.floor(Math.random()*(max-min+1))));
+      // nessuno fa due sabati nello stesso mese: se le persone libere del mese
+      // non bastano, i turni restano più piccoli (si spartiscono quelle libere)
+      const monthNow = monthKey(iso);
+      const freeNow = people.filter(p => !work[p.name].months.has(monthNow)).length;
+      let laterInMonth = 0;
+      for(let j = idx+1; j < saturdays.length && monthKey(saturdays[j]) === monthNow; j++) laterInMonth++;
+      const size = isFirstOfMonth ? Math.max(1, Math.min(wanted, freeNow)) : Math.max(1, Math.min(wanted, Math.max(Math.floor(freeNow/(laterInMonth+1)), freeNow - laterInMonth*min)));
+      if(size < wanted) shrunk++;
       const n = Math.min(size, people.length);
       const isFirst = idx === 0;
       const isLast = idx === lastIdx;
@@ -877,7 +899,7 @@
       // serve davvero (es. la Basilicata ha solo 2 persone ma ogni turno ne
       // richiede una).
       const forced = forcedAt[idx];
-      const scored = people.filter(p => !smallSet.has(p.name)).map(p => {
+      const scored = people.filter(p => !smallSet.has(p.name) && !work[p.name].months.has(thisMonth)).map(p => {
         const w = work[p.name];
         let score = posCount(p) * 1000;
         score += w.total * 10;
@@ -889,7 +911,7 @@
         return {name:p.name, score};
       }).sort((a,b) => a.score - b.score);
 
-      let chosen = pickByTargets(scored, isFirstOfMonth, forced, info, pairSet, max);
+      let chosen = pickByTargets(scored, Math.max(n, forced.length), forced, info, pairSet);
       if(!chosen.length) chosen = pickShift(scored, Math.max(n, forced.length), info, pairSet, forced);
       if(chosen.length < n){
         // non si riesce a coprire tutte le regioni: si ripiega sulla scelta
@@ -898,8 +920,7 @@
         chosen = pickCompatible(scored.map(s => s.name), n, info, pairSet, forced);
       }
       if(chosen.length < n) underfilled++;
-      if(chosen.some(nm => work[nm].months.has(thisMonth))) relaxedMonth = true;
-      if(chosen.some(nm => prevWeekPeople.has(nm))) relaxedConsecutive = true;
+            if(chosen.some(nm => prevWeekPeople.has(nm))) relaxedConsecutive = true;
 
       const pool = people.filter(p => !work[p.name].months.has(thisMonth) && !prevWeekPeople.has(p.name));
       if(pool.length > 0){
@@ -931,7 +952,7 @@
       result.push({date: iso, people: chosen});
     }
 
-    return {year, startMonth, saturdays: result, skipped, relaxedMonth, relaxedConsecutive, relaxedPosition, positionRepeatCost, underfilled, regionRuleBroken};
+    return {year, startMonth, saturdays: result, skipped, relaxedMonth, relaxedConsecutive, relaxedPosition, positionRepeatCost, underfilled, regionRuleBroken, shrunk};
   }
 
   // La generazione greedy va sabato per sabato, quindi un ordine sfortunato
@@ -946,7 +967,7 @@
     for(let i=0; i<attempts; i++){
       const d = generateDraftOnce(year, startMonth, min, max);
       if(!best){ best = d; continue; }
-      const scoreOf = x => x.underfilled*1e10 + x.regionRuleBroken*1e9 + (x.relaxedConsecutive?1e8:0) + (x.relaxedMonth?1e5:0) + x.positionRepeatCost;
+      const scoreOf = x => x.underfilled*1e10 + x.regionRuleBroken*1e9 + x.shrunk*1e9 + (x.relaxedConsecutive?1e8:0) + x.positionRepeatCost;
       if(scoreOf(d) < scoreOf(best)) best = d;
       if(scoreOf(best) === 0) break; // rotazione perfetta: non serve cercare oltre
     }
@@ -1078,7 +1099,7 @@
       if(k === j || !sats[k].people.includes(name)) continue;
       const q = saturdayOrdinalInMonth(sats[k].date);
       if(!allowRepeatPos && (q.ordStart === o.ordStart || q.ordEnd === o.ordEnd)) return false;
-      if(!allowSameMonth && monthKey(sats[k].date) === monthKey(t.date)) return false;
+      if(monthKey(sats[k].date) === monthKey(t.date)) return false;
     }
     return true;
   }
@@ -1093,8 +1114,7 @@
     const missing = allRegions.filter(r => !present.has(r));
     const cands = (am, rp) => people.map(p => p.name).filter(n => n !== excludeName && canPlace(n, idx, am, rp));
     let list = cands(false, false), note = '';
-    if(!list.length){ list = cands(true, false); note = ' (stesso mese di un altro suo turno)'; }
-    if(!list.length){ list = cands(true, true); note = ' (ripete una posizione già fatta)'; }
+    if(!list.length){ list = cands(false, true); note = ' (ripete una posizione già fatta)'; }
     // sostituzione "alla pari": prima la stessa provincia, poi la stessa regione
     let usedPrefer = false;
     if(prefer && prefer.province){
@@ -1133,8 +1153,7 @@
       return best[Math.floor(Math.random()*best.length)];
     };
     let j = pick(false), note = '';
-    if(j < 0){ j = pick(true); note = ' (stesso mese di un altro suo turno)'; }
-    if(j < 0) msgs.push(name + ' tolto/a: non c\'è un altro turno dove metterlo/a senza rompere le regole.');
+    if(j < 0) msgs.push(name + ' tolto/a: non c\'è un altro turno dove metterlo/a senza rompere le regole (salta al mese successivo).');
     else { sats[j].people.push(name); msgs.push(name + ' spostato/a a ' + fmtDate(sats[j].date) + note + '.'); }
 
     // riempie il turno solo se è sceso sotto il minimo di persone
@@ -1312,10 +1331,11 @@
     if(draft.underfilled){
       genNotice.innerHTML += '<p class="notice skip">In ' + draft.underfilled + (draft.underfilled === 1 ? ' turno' : ' turni') + ' non è stato possibile arrivare al numero di persone richiesto rispettando regione, provincia e coppie vietate: ci sono meno persone del previsto.</p>';
     }
+    if(draft.shrunk){
+      genNotice.innerHTML += '<p class="notice skip">Nessuno fa due sabati nello stesso mese: in ' + draft.shrunk + (draft.shrunk === 1 ? ' turno' : ' turni') + ' ci sono meno persone del previsto perché non c\'erano abbastanza persone libere in quel mese.</p>';
+    }
     if(draft.relaxedConsecutive){
-      genNotice.innerHTML += '<p class="notice skip">La squadra è troppo piccola per evitare del tutto sabati consecutivi e ripetizioni nello stesso mese: controlla i turni qui sotto.</p>';
-    } else if(draft.relaxedMonth){
-      genNotice.innerHTML += '<p class="notice skip">La squadra è piccola rispetto al numero di turni: in qualche caso la stessa persona è tornata nello stesso mese (mai su sabati consecutivi).</p>';
+      genNotice.innerHTML += '<p class="notice skip">La squadra è troppo piccola per evitare del tutto sabati consecutivi a cavallo fra due mesi: controlla i turni qui sotto.</p>';
     } else if(draft.relaxedPosition){
       genNotice.innerHTML += '<p class="notice skip">La squadra è piccola rispetto al numero di turni: in qualche caso non è stato possibile far ruotare tutti sulla stessa posizione del mese (es. "primo sabato"), pur rispettando gli altri vincoli.</p>';
     }
