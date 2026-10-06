@@ -1035,7 +1035,7 @@
   const draftCount = n => draft.saturdays.filter(t => t.people.includes(n)).length;
 
   // mette in un turno un'altra persona (che rispetta le regole) al posto di chi è uscito
-  function refillShift(idx, excludeName){
+  function refillShift(idx, excludeName, prefer){
     const sats = draft.saturdays, t = sats[idx];
     const info = buildInfo();
     const allRegions = Array.from(new Set(people.map(p => p.region).filter(Boolean)));
@@ -1044,7 +1044,17 @@
     const cands = allowSameMonth => people.map(p => p.name).filter(n => n !== excludeName && canPlace(n, idx, allowSameMonth));
     let list = cands(false), note = '';
     if(!list.length){ list = cands(true); note = ' (stesso mese di un altro suo turno)'; }
-    if(missing.length){
+    // sostituzione "alla pari": prima la stessa provincia, poi la stessa regione
+    let usedPrefer = false;
+    if(prefer && prefer.province){
+      const sp = list.filter(n => (info[n]||{}).province === prefer.province);
+      if(sp.length){ list = sp; usedPrefer = true; }
+    }
+    if(!usedPrefer && prefer && prefer.region){
+      const sr = list.filter(n => (info[n]||{}).region === prefer.region);
+      if(sr.length){ list = sr; usedPrefer = true; }
+    }
+    if(!usedPrefer && missing.length){
       const fill = list.filter(n => missing.includes((info[n]||{}).region));
       if(fill.length) list = fill;
     }
@@ -1099,10 +1109,10 @@
     sats.forEach((u, k) => {
       if(k === idx || !u.people.includes(added)) return;
       const q = saturdayOrdinalInMonth(u.date);
-      if(Math.abs(k-idx) === 1 || q.ordStart === o.ordStart || q.ordEnd === o.ordEnd){
+      if(Math.abs(k-idx) === 1 || monthKey(u.date) === monthKey(t.date) || q.ordStart === o.ordStart || q.ordEnd === o.ordEnd){
         u.people = u.people.filter(n => n !== added);
         msgs.push(added + ' tolto/a dal ' + fmtDate(u.date) + '.');
-        const m = refillShift(k, added);
+        const m = refillShift(k, added, {province: inf.province, region: inf.region});
         if(m) msgs.push(m);
       }
     });
