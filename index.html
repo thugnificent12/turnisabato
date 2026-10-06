@@ -178,7 +178,7 @@
 
   <section id="team-section">
     <h2>Squadra <span class="count" id="team-count"></span></h2>
-    <p class="hint">In ogni turno ogni regione presente ha da 2 a 3 persone (la Basilicata può stare anche da sola, perché le sue persone sono della stessa provincia) e c'è una sola persona per provincia. Puoi modificare nome, regione e provincia direttamente qui sotto.</p>
+    <p class="hint">In ogni turno sono presenti tutte le regioni: con 4 persone una per regione, con 5 una regione ne ha 2 (al massimo 3 per regione). C'è una sola persona per provincia. Puoi modificare nome, regione e provincia direttamente qui sotto.</p>
     <ul id="people-list"></ul>
     <div class="row add-person-row">
       <input type="text" id="new-person" placeholder="Nome e cognome">
@@ -225,7 +225,7 @@
 
   <section id="results-section" style="display:none;">
     <h2>Turni proposti <span class="count" id="period-label"></span></h2>
-    <p class="hint">Tocca la × per togliere qualcuno da un turno, o aggiungilo dal menu sotto. Quando sei soddisfatto, salva il periodo.</p>
+    <p class="hint">Tocca la × per togliere qualcuno da un turno: viene spostato in un altro turno e al suo posto entra in automatico un'altra persona, sempre nel rispetto delle regole. Oppure aggiungi qualcuno dal menu sotto. Quando sei soddisfatto, salva il periodo.</p>
     <table class="ledger"><tbody id="results-body"></tbody></table>
     <div class="actions-row">
       <button class="primary" id="save-period">Salva questo periodo</button>
@@ -636,8 +636,7 @@
   }
 
   // ---------- vincoli: regione, provincia, coppie vietate ----------
-  const MIN_PER_REGION = 2;     // ogni regione presente in un turno ha almeno 2 persone...
-  const MAX_PER_REGION = 3;     // ...e al massimo 3
+  const MAX_PER_REGION = 3;     // al massimo 3 persone della stessa regione per turno
   const FIRST_SATURDAY_SIZE = 5; // persone nel primo sabato lavorativo di ogni mese
   const MAX_PER_PROVINCE = 1;   // al massimo 1 persona per provincia per turno
   const norm = v => (v||'').trim().toLowerCase();
@@ -668,28 +667,18 @@
     }
     return chosen;
   }
-  // regioni che non possono mai avere 2 persone nello stesso turno perché tutte
-  // le loro persone sono della stessa provincia (es. due persone di Potenza):
-  // per loro il minimo di 2 non si applica e possono stare anche da sole
-  function exemptRegions(info){
-    const provs = {};
-    Object.values(info).forEach(i => { (provs[i.region] = provs[i.region] || new Set()).add(i.province || '#'+Math.random()); });
-    const ex = new Set();
-    Object.keys(provs).forEach(r => { if(!r || provs[r].size < MIN_PER_REGION) ex.add(r); });
-    return ex;
-  }
-
-  // compone un turno da n persone in cui ogni regione presente ha da 2 a 3
-  // persone (1 solo per le regioni esenti), con una sola persona per provincia
-  // e senza coppie vietate. Fra tutte le combinazioni valide sceglie quella con
-  // il punteggio complessivo migliore. `scored` = [{name, score}] ordinato.
-  function pickShift(scored, n, info, pairSet, exempt){
+  // compone un turno da n persone in cui TUTTE le regioni sono presenti
+  // (almeno 1 persona per regione, al massimo 3), con una sola persona per
+  // provincia e senza coppie vietate. Con n = numero di regioni c'è una
+  // persona per regione; i posti in più vanno alle regioni più grandi.
+  // `scored` = [{name, score}] ordinato; fra tutte le combinazioni valide
+  // sceglie quella con il punteggio complessivo migliore.
+  function pickShift(scored, n, info, pairSet){
     const byRegion = {};
     scored.forEach(s => { const r = (info[s.name]||{}).region || ''; (byRegion[r] = byRegion[r] || []).push(s); });
     const regions = Object.keys(byRegion).map(r => {
-      const sizes = exempt.has(r) ? [1,2,3] : [MIN_PER_REGION, MAX_PER_REGION];
       const groups = {};
-      for(const k of sizes){
+      for(let k = 1; k <= MAX_PER_REGION; k++){
         const names = [], provs = new Set(); let cost = 0;
         for(const c of byRegion[r]){
           if(names.length >= k) break;
@@ -701,11 +690,12 @@
         if(names.length === k) groups[k] = {names, cost};
       }
       return {region:r, groups};
-    });
+    }).filter(r => Object.keys(r.groups).length > 0);
     let best = null;
     const rec = (i, remaining, acc, cost) => {
       if(best && cost >= best.cost) return;
-      if(remaining === 0){
+      if(i >= regions.length){
+        if(remaining !== 0) return;
         const all = acc.flatMap(g => g.names);
         const provSeen = new Set();
         for(const nm of all){
@@ -716,8 +706,6 @@
         best = {names: all, cost};
         return;
       }
-      if(i >= regions.length) return;
-      rec(i+1, remaining, acc, cost);
       Object.keys(regions[i].groups).forEach(k => {
         k = +k;
         if(k <= remaining) rec(i+1, remaining-k, acc.concat([regions[i].groups[k]]), cost + regions[i].groups[k].cost);
@@ -726,6 +714,7 @@
     rec(0, n, [], 0);
     return best ? best.names : [];
   }
+
   // motivi per cui aggiungere `name` a un turno già composto violerebbe una regola
   function conflictReasons(name, currentNames){
     const info = buildInfo(), pairSet = buildPairSet();
@@ -761,7 +750,6 @@
     let relaxedMonth = false, relaxedConsecutive = false, relaxedPosition = false, positionRepeatCost = 0, underfilled = 0;
     const info = buildInfo();
     const pairSet = buildPairSet();
-    const exempt = exemptRegions(info);
     let regionRuleBroken = 0;
     const boundaryExclude = saturdays.length ? peopleOnPrecedingSavedSaturday(saturdays[0]) : new Set();
 
@@ -783,44 +771,35 @@
       // di calendario (es. "primo sabato del mese") va scelto per primo.
       const posCount = p => (work[p.name].monthPosStart[mOrd.ordStart]||0) + (work[p.name].monthPosEnd[mOrd.ordEnd]||0);
 
-      const scoreList = pool => pool.map(p => {
+      // punteggio: più basso = più adatto. Rotazione sulla posizione nel mese,
+      // poi carico totale. Chi ha già lavorato questo mese o il sabato prima
+      // resta ammesso ma con una penalità enorme, così viene usato solo quando
+      // serve davvero (es. la Basilicata ha solo 2 persone ma ogni turno ne
+      // richiede una).
+      const scored = people.map(p => {
         const w = work[p.name];
         let score = posCount(p) * 1000;
         score += w.total * 10;
         score += (w.posStart[idx] || 0) * 3;
         score += (w.posEnd[idxEnd] || 0) * 3;
         score += Math.random()*3;
+        if(w.months.has(thisMonth)) score += 5e6;
+        if(prevWeekPeople.has(p.name)) score += 5e8;
         return {name:p.name, score};
       }).sort((a,b) => a.score - b.score);
 
-      // livelli di ammissibilità, dal più rigido al più largo:
-      // 0) niente stesso mese e niente sabato consecutivo
-      // 1) si accetta lo stesso mese (mai sabati consecutivi)
-      // 2) si accetta anche il sabato consecutivo
-      // I vincoli di regione, provincia e coppie vietate valgono SEMPRE.
-      const levels = [
-        people.filter(p => !work[p.name].months.has(thisMonth) && !prevWeekPeople.has(p.name)),
-        people.filter(p => !prevWeekPeople.has(p.name)),
-        people.slice()
-      ];
-      let chosen = [], usedLevel = 0;
-      for(let L=0; L<levels.length; L++){
-        usedLevel = L;
-        chosen = pickShift(scoreList(levels[L]), n, info, pairSet, exempt);
-        if(chosen.length >= n) break;
-      }
+      let chosen = pickShift(scored, n, info, pairSet);
       if(chosen.length < n){
-        // nessuna combinazione rispetta 2-3 per regione: si ripiega sulla scelta
+        // non si riesce a coprire tutte le regioni: si ripiega sulla scelta
         // semplice (max 3 per regione, provincia e coppie sempre rispettate)
         regionRuleBroken++;
-        usedLevel = levels.length - 1;
-        chosen = pickCompatible(scoreList(levels[levels.length-1]).map(s => s.name), n, info, pairSet);
+        chosen = pickCompatible(scored.map(s => s.name), n, info, pairSet);
       }
-      if(usedLevel >= 1) relaxedMonth = true;
-      if(usedLevel >= 2) relaxedConsecutive = true;
       if(chosen.length < n) underfilled++;
+      if(chosen.some(nm => work[nm].months.has(thisMonth))) relaxedMonth = true;
+      if(chosen.some(nm => prevWeekPeople.has(nm))) relaxedConsecutive = true;
 
-      const pool = levels[usedLevel];
+      const pool = people.filter(p => !work[p.name].months.has(thisMonth) && !prevWeekPeople.has(p.name));
       if(pool.length > 0){
         const minPos = Math.min(...pool.map(posCount));
         const minGroupSize = pool.filter(p => posCount(p) === minPos).length;
@@ -979,6 +958,123 @@
   const periodLabel = document.getElementById('period-label');
   const genNotice = document.getElementById('gen-notice');
 
+  // regole per mettere `name` nel turno j della bozza: una sola persona per
+  // provincia, max 3 per regione, nessuna coppia vietata, mai due sabati
+  // consecutivi, e mai la stessa posizione nel mese (se ha fatto il primo non
+  // rifà il primo; stesso discorso per l'ultimo). Lo stesso mese è permesso
+  // solo se queste regole sono rispettate; si preferisce comunque un mese diverso.
+  function canPlace(name, j, allowSameMonth){
+    const sats = draft.saturdays, t = sats[j];
+    if(t.people.includes(name)) return false;
+    if(conflictReasons(name, t.people).length) return false;
+    const before = j > 0 ? sats[j-1].people.includes(name) : peopleOnPrecedingSavedSaturday(t.date).has(name);
+    const after = j < sats.length-1 && sats[j+1].people.includes(name);
+    if(before || after) return false;
+    const o = saturdayOrdinalInMonth(t.date);
+    for(let k = 0; k < sats.length; k++){
+      if(k === j || !sats[k].people.includes(name)) continue;
+      const q = saturdayOrdinalInMonth(sats[k].date);
+      if(q.ordStart === o.ordStart || q.ordEnd === o.ordEnd) return false;
+      if(!allowSameMonth && monthKey(sats[k].date) === monthKey(t.date)) return false;
+    }
+    return true;
+  }
+  const draftCount = n => draft.saturdays.filter(t => t.people.includes(n)).length;
+
+  // mette in un turno un'altra persona (che rispetta le regole) al posto di chi è uscito
+  function refillShift(idx, excludeName){
+    const sats = draft.saturdays, t = sats[idx];
+    const info = buildInfo();
+    const allRegions = Array.from(new Set(people.map(p => p.region).filter(Boolean)));
+    const present = new Set(t.people.map(n => (info[n]||{}).region));
+    const missing = allRegions.filter(r => !present.has(r));
+    const cands = allowSameMonth => people.map(p => p.name).filter(n => n !== excludeName && canPlace(n, idx, allowSameMonth));
+    let list = cands(false), note = '';
+    if(!list.length){ list = cands(true); note = ' (stesso mese di un altro suo turno)'; }
+    if(missing.length){
+      const fill = list.filter(n => missing.includes((info[n]||{}).region));
+      if(fill.length) list = fill;
+    }
+    if(!list.length) return 'Turno del ' + fmtDate(t.date) + ': nessuno disponibile per sostituire senza rompere le regole.';
+    const minC = Math.min(...list.map(draftCount));
+    const bestL = list.filter(n => draftCount(n) === minC);
+    const who = bestL[Math.floor(Math.random()*bestL.length)];
+    t.people.push(who);
+    return who + ' inserito/a il ' + fmtDate(t.date) + note + '.';
+  }
+
+  // quando si toglie una persona da un turno: 1) la si rimette in un altro turno
+  // che non rompe le regole; 2) il turno svuotato si riempie con un'altra persona
+  function relocatePerson(name, fromIdx, doRefill){
+    const minSize = parseInt(document.getElementById('f-min').value, 10) || 4;
+    const maxSize = parseInt(document.getElementById('f-max').value, 10) || 5;
+    const sats = draft.saturdays;
+    const msgs = [];
+
+    const pick = allowSameMonth => {
+      const options = sats.map((t, j) => j).filter(j => j !== fromIdx && sats[j].people.length < maxSize && canPlace(name, j, allowSameMonth));
+      if(!options.length) return -1;
+      const minLen = Math.min(...options.map(j => sats[j].people.length));
+      const best = options.filter(j => sats[j].people.length === minLen);
+      return best[Math.floor(Math.random()*best.length)];
+    };
+    let j = pick(false), note = '';
+    if(j < 0){ j = pick(true); note = ' (stesso mese di un altro suo turno)'; }
+    if(j < 0) msgs.push(name + ' tolto/a: non c\'è un altro turno dove metterlo/a senza rompere le regole.');
+    else { sats[j].people.push(name); msgs.push(name + ' spostato/a a ' + fmtDate(sats[j].date) + note + '.'); }
+
+    // riempie il turno solo se è sceso sotto il minimo di persone
+    if(doRefill && sats[fromIdx].people.length < minSize){
+      const m = refillShift(fromIdx, name);
+      if(m) msgs.push(m);
+    }
+    return msgs.join(' ');
+  }
+
+  // aggiunta manuale: se la persona aggiunta rompe una regola nel turno (stessa
+  // provincia, coppia vietata, troppi della stessa regione, turno oltre il massimo)
+  // chi era già nel turno viene spostato in automatico in un altro turno
+  function resolveAfterAdd(added, idx){
+    const sats = draft.saturdays, t = sats[idx];
+    const info = buildInfo(), pairSet = buildPairSet();
+    const maxSize = parseInt(document.getElementById('f-max').value, 10) || 5;
+    const inf = info[added] || {};
+    const msgs = [];
+    // se la persona aggiunta è già in un sabato adiacente (o ripete la stessa
+    // posizione del mese), viene tolta da lì e quel turno si ricompleta con altri
+    const o = saturdayOrdinalInMonth(t.date);
+    sats.forEach((u, k) => {
+      if(k === idx || !u.people.includes(added)) return;
+      const q = saturdayOrdinalInMonth(u.date);
+      if(Math.abs(k-idx) === 1 || q.ordStart === o.ordStart || q.ordEnd === o.ordEnd){
+        u.people = u.people.filter(n => n !== added);
+        msgs.push(added + ' tolto/a dal ' + fmtDate(u.date) + '.');
+        const m = refillShift(k, added);
+        if(m) msgs.push(m);
+      }
+    });
+    const evict = who => {
+      t.people = t.people.filter(n => n !== who);
+      msgs.push(relocatePerson(who, idx, false));
+    };
+    t.people.filter(n => n !== added && ((inf.province && (info[n]||{}).province === inf.province) || pairSet.has(n+'|'+added) || pairSet.has(added+'|'+n))).forEach(evict);
+    while(inf.region && t.people.filter(n => (info[n]||{}).region === inf.region).length > MAX_PER_REGION){
+      const same = t.people.filter(n => n !== added && (info[n]||{}).region === inf.region);
+      same.sort((a,b) => draftCount(b) - draftCount(a));
+      evict(same[0]);
+    }
+    while(t.people.length > maxSize){
+      const regCount = {};
+      t.people.forEach(n => { const r=(info[n]||{}).region; regCount[r]=(regCount[r]||0)+1; });
+      let c = t.people.filter(n => n !== added && regCount[(info[n]||{}).region] > 1);
+      if(!c.length) c = t.people.filter(n => n !== added);
+      if(!c.length) break;
+      c.sort((a,b) => draftCount(b) - draftCount(a));
+      evict(c[0]);
+    }
+    return msgs.join(' ');
+  }
+
   function renderResults(){
     resultsBody.innerHTML = '';
     const lastIdx = draft.saturdays.length - 1;
@@ -1010,7 +1106,9 @@
         rm.textContent = '×';
         rm.addEventListener('click', () => {
           s.people = s.people.filter(n => n !== name);
+          const msg = relocatePerson(name, idx, true);
           renderResults();
+          toast(msg);
         });
         chip.appendChild(rm);
         chips.appendChild(chip);
@@ -1060,8 +1158,11 @@
       });
       sel.addEventListener('change', () => {
         if(sel.value){
-          s.people.push(sel.value);
+          const added = sel.value;
+          s.people.push(added);
+          const msg = resolveAfterAdd(added, idx);
           renderResults();
+          if(msg) toast(msg);
         }
       });
       addRow.appendChild(sel);
@@ -1092,7 +1193,7 @@
       genNotice.innerHTML += '<p class="notice skip">Sabati non lavorativi esclusi: ' + names + '.</p>';
     }
     if(draft.regionRuleBroken){
-      genNotice.innerHTML += '<p class="notice skip">In ' + draft.regionRuleBroken + (draft.regionRuleBroken === 1 ? ' turno' : ' turni') + ' non è stato possibile avere da 2 a 3 persone per ogni regione: controlla i turni qui sotto.</p>';
+      genNotice.innerHTML += '<p class="notice skip">In ' + draft.regionRuleBroken + (draft.regionRuleBroken === 1 ? ' turno' : ' turni') + ' non è stato possibile avere tutte le regioni presenti: controlla i turni qui sotto.</p>';
     }
     if(draft.underfilled){
       genNotice.innerHTML += '<p class="notice skip">In ' + draft.underfilled + (draft.underfilled === 1 ? ' turno' : ' turni') + ' non è stato possibile arrivare al numero di persone richiesto rispettando regione, provincia e coppie vietate: ci sono meno persone del previsto.</p>';
