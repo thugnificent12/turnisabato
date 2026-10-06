@@ -211,9 +211,9 @@
       </label>
       <label class="full">Persone per turno
         <div class="minmax">
-          <input type="number" id="f-min" min="1" max="20" value="4"> – 
-          <input type="number" id="f-max" min="1" max="20" value="5">
-          <span style="color:var(--ink-soft); font-size:.8rem;">a sabato (il primo sabato di ogni mese sempre 5)</span>
+          <input type="number" id="f-min" min="1" max="20" value="5"> – 
+          <input type="number" id="f-max" min="1" max="20" value="6">
+          <span style="color:var(--ink-soft); font-size:.8rem;">il massimo vale anche in generazione: 2 Calabria, 2 Campania, 1 Puglia; nel sabato della Basilicata, se il massimo è 5, una di Calabria o Campania scende a 1 (con 6 restano tutti)</span>
         </div>
       </label>
       <div class="full">
@@ -646,29 +646,53 @@
     people.forEach(p => { info[p.name] = {region: norm(p.region), province: norm(p.province)}; });
     return info;
   }
-  // primo sabato del mese: 2 Calabria, 2 Campania, 1 Puglia oppure 1 Basilicata
-  function pickFirstSaturday(scored, forced, info, pairSet){
-    const caps = {calabria:2, campania:2, puglia: forced.length ? 0 : 1};
+  // composizione desiderata di ogni turno: 2 Calabria, 2 Campania, 1 Puglia
+  // (la Basilicata arriva dal suo sabato fisso del mese). Il primo sabato del
+  // mese è rigido: 2 + 2 + (1 Puglia oppure 1 Basilicata). Negli altri sabati
+  // 3 per Calabria/Campania o 2 per Puglia sono ammessi solo se serve davvero
+  // (costano più di tutto il resto, tranne ripetere qualcuno nello stesso mese).
+  function pickByTargets(scored, isFirst, forced, info, pairSet, maxTotal){
+    const target = {calabria:2, campania:2, puglia:1};
+    const cap = isFirst ? {calabria:2, campania:2, puglia: forced.length ? 0 : 1}
+                        : {calabria:3, campania:3, puglia:2};
     const fixedProv = new Set(forced.map(f => (info[f]||{}).province).filter(Boolean));
     const byRegion = {};
-    scored.forEach(s => { const r = (info[s.name]||{}).region || ''; if(caps[r]) (byRegion[r] = byRegion[r] || []).push(s); });
-    const regions = Object.keys(caps).filter(r => caps[r] && byRegion[r]).map(r => {
-      const names = [], provs = new Set(fixedProv); let cost = 0;
-      for(const c of byRegion[r]){
-        if(names.length >= caps[r]) break;
-        const pr = (info[c.name]||{}).province;
-        if(pr && provs.has(pr)) continue;
-        if(names.some(x => pairSet.has(x+'|'+c.name))) continue;
-        if(forced.some(x => pairSet.has(x+'|'+c.name))) continue;
-        names.push(c.name); cost += c.score; if(pr) provs.add(pr);
+    scored.forEach(sc => { const r = (info[sc.name]||{}).region || ''; (byRegion[r] = byRegion[r] || []).push(sc); });
+    const regions = Object.keys(byRegion).map(r => {
+      const c = cap[r] === undefined ? 1 : cap[r];
+      const t = target[r] === undefined ? 1 : target[r];
+      const groups = {};
+      for(let k = 1; k <= c; k++){
+        const names = [], provs = new Set(fixedProv);
+        let cost = k < t ? (t-k)*1e5 : (k-t)*2e5;
+        for(const x of byRegion[r]){
+          if(names.length >= k) break;
+          const pr = (info[x.name]||{}).province;
+          if(pr && provs.has(pr)) continue;
+          if(names.some(y => pairSet.has(y+'|'+x.name))) continue;
+          if(forced.some(y => pairSet.has(y+'|'+x.name))) continue;
+          names.push(x.name); cost += x.score; if(pr) provs.add(pr);
+        }
+        if(names.length === k) groups[k] = {names, cost};
       }
-      return {names, cost};
-    });
-    const all = forced.concat(regions.flatMap(g => g.names));
-    const provSeen = new Set();
-    for(const nm of all){ const pr = (info[nm]||{}).province; if(pr){ if(provSeen.has(pr)) return []; provSeen.add(pr); } }
-    for(let a=0;a<all.length;a++) for(let b=a+1;b<all.length;b++) if(pairSet.has(all[a]+'|'+all[b])) return [];
-    return all.length >= 5 ? all : [];
+      return {groups};
+    }).filter(g => Object.keys(g.groups).length > 0);
+    let best = null;
+    const rec = (i, acc, cost) => {
+      if(best && cost >= best.cost) return;
+      if(i >= regions.length){
+        const all = forced.concat(acc.flatMap(g => g.names));
+        if(maxTotal && all.length > maxTotal) return;
+        const seen = new Set();
+        for(const nm of all){ const pr = (info[nm]||{}).province; if(pr){ if(seen.has(pr)) return; seen.add(pr); } }
+        for(let x=0;x<all.length;x++) for(let y=x+1;y<all.length;y++) if(pairSet.has(all[x]+'|'+all[y])) return;
+        best = {names: all, cost};
+        return;
+      }
+      Object.keys(regions[i].groups).forEach(k => rec(i+1, acc.concat([regions[i].groups[k]]), cost + regions[i].groups[k].cost));
+    };
+    rec(0, [], 0);
+    return best ? best.names : [];
   }
 
   // persone di regioni con 2 o meno persone in squadra
@@ -865,7 +889,7 @@
         return {name:p.name, score};
       }).sort((a,b) => a.score - b.score);
 
-      let chosen = isFirstOfMonth ? pickFirstSaturday(scored, forced, info, pairSet) : [];
+      let chosen = pickByTargets(scored, isFirstOfMonth, forced, info, pairSet, max);
       if(!chosen.length) chosen = pickShift(scored, Math.max(n, forced.length), info, pairSet, forced);
       if(chosen.length < n){
         // non si riesce a coprire tutte le regioni: si ripiega sulla scelta
@@ -1041,7 +1065,7 @@
   // consecutivi, e mai la stessa posizione nel mese (se ha fatto il primo non
   // rifà il primo; stesso discorso per l'ultimo). Lo stesso mese è permesso
   // solo se queste regole sono rispettate; si preferisce comunque un mese diverso.
-  function canPlace(name, j, allowSameMonth){
+  function canPlace(name, j, allowSameMonth, allowRepeatPos){
     const sats = draft.saturdays, t = sats[j];
     if(t.people.includes(name)) return false;
     if(conflictReasons(name, t.people).length) return false;
@@ -1053,7 +1077,7 @@
     for(let k = 0; k < sats.length; k++){
       if(k === j || !sats[k].people.includes(name)) continue;
       const q = saturdayOrdinalInMonth(sats[k].date);
-      if(q.ordStart === o.ordStart || q.ordEnd === o.ordEnd) return false;
+      if(!allowRepeatPos && (q.ordStart === o.ordStart || q.ordEnd === o.ordEnd)) return false;
       if(!allowSameMonth && monthKey(sats[k].date) === monthKey(t.date)) return false;
     }
     return true;
@@ -1067,9 +1091,10 @@
     const allRegions = Array.from(new Set(people.map(p => p.region).filter(Boolean)));
     const present = new Set(t.people.map(n => (info[n]||{}).region));
     const missing = allRegions.filter(r => !present.has(r));
-    const cands = allowSameMonth => people.map(p => p.name).filter(n => n !== excludeName && canPlace(n, idx, allowSameMonth));
-    let list = cands(false), note = '';
-    if(!list.length){ list = cands(true); note = ' (stesso mese di un altro suo turno)'; }
+    const cands = (am, rp) => people.map(p => p.name).filter(n => n !== excludeName && canPlace(n, idx, am, rp));
+    let list = cands(false, false), note = '';
+    if(!list.length){ list = cands(true, false); note = ' (stesso mese di un altro suo turno)'; }
+    if(!list.length){ list = cands(true, true); note = ' (ripete una posizione già fatta)'; }
     // sostituzione "alla pari": prima la stessa provincia, poi la stessa regione
     let usedPrefer = false;
     if(prefer && prefer.province){
@@ -1095,8 +1120,8 @@
   // quando si toglie una persona da un turno: 1) la si rimette in un altro turno
   // che non rompe le regole; 2) il turno svuotato si riempie con un'altra persona
   function relocatePerson(name, fromIdx, doRefill){
-    const minSize = parseInt(document.getElementById('f-min').value, 10) || 4;
-    const maxSize = parseInt(document.getElementById('f-max').value, 10) || 5;
+    const minSize = parseInt(document.getElementById('f-min').value, 10) || 5;
+    const maxSize = parseInt(document.getElementById('f-max').value, 10) || 6;
     const sats = draft.saturdays;
     const msgs = [];
 
@@ -1114,7 +1139,7 @@
 
     // riempie il turno solo se è sceso sotto il minimo di persone
     if(doRefill && sats[fromIdx].people.length < minSize){
-      const m = refillShift(fromIdx, name);
+      const pp = (people.find(x => x.name === name) || {}); const m = refillShift(fromIdx, name, {province: norm(pp.province), region: norm(pp.region)});
       if(m) msgs.push(m);
     }
     return msgs.join(' ');
@@ -1126,7 +1151,7 @@
   function resolveAfterAdd(added, idx){
     const sats = draft.saturdays, t = sats[idx];
     const info = buildInfo(), pairSet = buildPairSet();
-    const maxSize = parseInt(document.getElementById('f-max').value, 10) || 5;
+    const maxSize = parseInt(document.getElementById('f-max').value, 10) || 6;
     const inf = info[added] || {};
     const msgs = [];
     // se la persona aggiunta è già in un sabato adiacente (o ripete la stessa
