@@ -646,6 +646,12 @@
     people.forEach(p => { info[p.name] = {region: norm(p.region), province: norm(p.province)}; });
     return info;
   }
+  // persone di regioni con 2 o meno persone in squadra
+  function smallRegionPeople(){
+    const cnt = {};
+    people.forEach(p => { const r = norm(p.region); if(r) cnt[r] = (cnt[r]||0)+1; });
+    return new Set(people.filter(p => { const r = norm(p.region); return r && cnt[r] <= 2; }).map(p => p.name));
+  }
   function buildPairSet(){
     const set = new Set();
     pairs.forEach(pr => { set.add(pr.a+'|'+pr.b); set.add(pr.b+'|'+pr.a); });
@@ -653,8 +659,10 @@
   }
   // scorre i candidati in ordine di preferenza e prende solo quelli compatibili
   // con chi è già stato scelto per quel sabato
-  function pickCompatible(sortedNames, n, info, pairSet){
-    const chosen = [], regionCount = {}, provinceCount = {};
+  function pickCompatible(sortedNames, n, info, pairSet, fixed){
+    fixed = fixed || [];
+    const chosen = fixed.slice(), regionCount = {}, provinceCount = {};
+    fixed.forEach(nm => { const f = info[nm] || {}; if(f.province) provinceCount[f.province] = (provinceCount[f.province]||0)+1; if(f.region) regionCount[f.region] = (regionCount[f.region]||0)+1; });
     for(const name of sortedNames){
       if(chosen.length >= n) break;
       const inf = info[name] || {region:'', province:''};
@@ -673,18 +681,25 @@
   // persona per regione; i posti in più vanno alle regioni più grandi.
   // `scored` = [{name, score}] ordinato; fra tutte le combinazioni valide
   // sceglie quella con il punteggio complessivo migliore.
-  function pickShift(scored, n, info, pairSet){
+  function pickShift(scored, n, info, pairSet, fixed){
+    fixed = fixed || [];
+    const fixedProv = new Set(fixed.map(f => (info[f]||{}).province).filter(Boolean));
+    const fixedReg = {};
+    fixed.forEach(f => { const r = (info[f]||{}).region || ''; fixedReg[r] = (fixedReg[r]||0)+1; });
     const byRegion = {};
     scored.forEach(s => { const r = (info[s.name]||{}).region || ''; (byRegion[r] = byRegion[r] || []).push(s); });
     const regions = Object.keys(byRegion).map(r => {
       const groups = {};
-      for(let k = 1; k <= MAX_PER_REGION; k++){
-        const names = [], provs = new Set(); let cost = 0;
+      const have = fixedReg[r] || 0;
+      for(let k = have ? 0 : 1; k <= MAX_PER_REGION - have; k++){
+        const names = [], provs = new Set(fixedProv); let cost = 0;
+        if(k === 0){ groups[0] = {names, cost:0}; continue; }
         for(const c of byRegion[r]){
           if(names.length >= k) break;
           const pr = (info[c.name]||{}).province;
           if(pr && provs.has(pr)) continue;
           if(names.some(x => pairSet.has(x+'|'+c.name))) continue;
+          if(fixed.some(x => pairSet.has(x+'|'+c.name))) continue;
           names.push(c.name); cost += c.score; if(pr) provs.add(pr);
         }
         if(names.length === k) groups[k] = {names, cost};
@@ -696,7 +711,7 @@
       if(best && cost >= best.cost) return;
       if(i >= regions.length){
         if(remaining !== 0) return;
-        const all = acc.flatMap(g => g.names);
+        const all = fixed.concat(acc.flatMap(g => g.names));
         const provSeen = new Set();
         for(const nm of all){
           const pr = (info[nm]||{}).province;
@@ -711,7 +726,7 @@
         if(k <= remaining) rec(i+1, remaining-k, acc.concat([regions[i].groups[k]]), cost + regions[i].groups[k].cost);
       });
     };
-    rec(0, n, [], 0);
+    rec(0, n - fixed.length, [], 0);
     return best ? best.names : [];
   }
 
@@ -753,6 +768,42 @@
     let regionRuleBroken = 0;
     const boundaryExclude = saturdays.length ? peopleOnPrecedingSavedSaturday(saturdays[0]) : new Set();
 
+    // regioni con pochissime persone (<= 2, es. Basilicata): ognuno lavora UN
+    // solo sabato al mese, scelto in anticipo e a rotazione; negli altri sabati
+    // di quella regione nel turno non c'è nessuno.
+    const smallSet = smallRegionPeople();
+    const forcedAt = saturdays.map(() => []);
+    {
+      const months = {};
+      saturdays.forEach((iso, i) => { (months[monthKey(iso)] = months[monthKey(iso)] || []).push(i); });
+      const planned = {};   // name -> [idx]
+      const planCnt = {};   // name -> {ordKey: n}
+      const names = people.map(p => p.name).filter(n => smallSet.has(n));
+      Object.keys(months).sort().forEach(mk => {
+        const idxs = months[mk], used = new Set();
+        names.slice().sort(() => Math.random()-0.5).forEach(nm => {
+          const mine = planned[nm] = planned[nm] || [];
+          const cost = i => {
+            const o = saturdayOrdinalInMonth(saturdays[i]);
+            const w = work[nm];
+            return ((w.monthPosStart[o.ordStart]||0) + (w.monthPosEnd[o.ordEnd]||0)) * 10
+              + ((planCnt[nm]||{})['s'+o.ordStart]||0) * 10 + ((planCnt[nm]||{})['e'+o.ordEnd]||0) * 10 + Math.random();
+          };
+          const adj = i => mine.includes(i-1) || mine.includes(i+1) || (i === 0 && boundaryExclude.has(nm));
+          let c = idxs.filter(i => !used.has(i) && !adj(i));
+          if(!c.length) c = idxs.filter(i => !used.has(i));
+          if(!c.length) c = idxs.slice();
+          c.sort((a,b) => cost(a) - cost(b));
+          const i = c[0];
+          used.add(i); mine.push(i); forcedAt[i].push(nm);
+          const o = saturdayOrdinalInMonth(saturdays[i]);
+          planCnt[nm] = planCnt[nm] || {};
+          planCnt[nm]['s'+o.ordStart] = (planCnt[nm]['s'+o.ordStart]||0)+1;
+          planCnt[nm]['e'+o.ordEnd] = (planCnt[nm]['e'+o.ordEnd]||0)+1;
+        });
+      });
+    }
+
     const result = [];
     for(let idx=0; idx<saturdays.length; idx++){
       const iso = saturdays[idx];
@@ -776,7 +827,8 @@
       // resta ammesso ma con una penalità enorme, così viene usato solo quando
       // serve davvero (es. la Basilicata ha solo 2 persone ma ogni turno ne
       // richiede una).
-      const scored = people.map(p => {
+      const forced = forcedAt[idx];
+      const scored = people.filter(p => !smallSet.has(p.name)).map(p => {
         const w = work[p.name];
         let score = posCount(p) * 1000;
         score += w.total * 10;
@@ -788,12 +840,12 @@
         return {name:p.name, score};
       }).sort((a,b) => a.score - b.score);
 
-      let chosen = pickShift(scored, n, info, pairSet);
+      let chosen = pickShift(scored, Math.max(n, forced.length), info, pairSet, forced);
       if(chosen.length < n){
         // non si riesce a coprire tutte le regioni: si ripiega sulla scelta
         // semplice (max 3 per regione, provincia e coppie sempre rispettate)
         regionRuleBroken++;
-        chosen = pickCompatible(scored.map(s => s.name), n, info, pairSet);
+        chosen = pickCompatible(scored.map(s => s.name), n, info, pairSet, forced);
       }
       if(chosen.length < n) underfilled++;
       if(chosen.some(nm => work[nm].months.has(thisMonth))) relaxedMonth = true;
@@ -967,6 +1019,7 @@
     const sats = draft.saturdays, t = sats[j];
     if(t.people.includes(name)) return false;
     if(conflictReasons(name, t.people).length) return false;
+    if(smallRegionPeople().has(name) && sats.some((u, k) => k !== j && monthKey(u.date) === monthKey(t.date) && u.people.includes(name))) return false;
     const before = j > 0 ? sats[j-1].people.includes(name) : peopleOnPrecedingSavedSaturday(t.date).has(name);
     const after = j < sats.length-1 && sats[j+1].people.includes(name);
     if(before || after) return false;
