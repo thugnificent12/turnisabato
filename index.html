@@ -188,17 +188,6 @@
     </div>
   </section>
 
-  <section id="rules-section">
-    <h2>Non insieme <span class="count" id="rules-count"></span></h2>
-    <p class="hint">Coppie di persone che non devono mai capitare nello stesso turno. Per un gruppo di tre, aggiungi le tre coppie.</p>
-    <ul id="pairs-list"></ul>
-    <div class="row">
-      <select id="pair-a"></select>
-      <select id="pair-b"></select>
-      <button class="ghost" id="add-pair">Aggiungi coppia</button>
-    </div>
-  </section>
-
   <section id="gen-section">
     <h2>Genera un trimestre</h2>
     <p class="hint">Scegli l'anno e il mese di partenza: verranno presi i sabati di quel mese e dei due successivi, escludendo le festività.</p>
@@ -376,7 +365,7 @@
 
   function setSyncNote(text){
     const el = document.getElementById('sync-note');
-    if(el) el.textContent = text + ' (versione 24)';
+    if(el) el.textContent = text;
   }
 
   // ---- local (offline) mode ----
@@ -716,9 +705,9 @@
     return new Set(people.filter(p => { const r = norm(p.region); return r && cnt[r] <= 2; }).map(p => p.name));
   }
   function buildPairSet(){
-    const set = new Set();
-    pairs.forEach(pr => { set.add(pr.a+'|'+pr.b); set.add(pr.b+'|'+pr.a); });
-    return set;
+    // la funzione "non insieme" è stata tolta: resta solo la regola
+    // "una persona per provincia" per tenere separati chi è della stessa provincia
+    return new Set();
   }
   // scorre i candidati in ordine di preferenza e prende solo quelli compatibili
   // con chi è già stato scelto per quel sabato
@@ -1009,6 +998,7 @@
   const pairA = document.getElementById('pair-a');
   const pairB = document.getElementById('pair-b');
   function renderRules(){
+    if(!pairsListEl) return;
     const names = people.map(p => p.name);
     [pairA, pairB].forEach((sel, i) => {
       const keep = sel.value;
@@ -1038,7 +1028,7 @@
     });
     document.getElementById('rules-count').textContent = pairs.length ? pairs.length + (pairs.length === 1 ? ' coppia' : ' coppie') : '';
   }
-  document.getElementById('add-pair').addEventListener('click', () => {
+  if(document.getElementById('add-pair')) document.getElementById('add-pair').addEventListener('click', () => {
     const a = pairA.value, b = pairB.value;
     if(!a || !b){ toast('Scegli due persone'); return; }
     if(a === b){ toast('Scegli due persone diverse'); return; }
