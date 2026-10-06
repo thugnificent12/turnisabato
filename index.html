@@ -646,6 +646,31 @@
     people.forEach(p => { info[p.name] = {region: norm(p.region), province: norm(p.province)}; });
     return info;
   }
+  // primo sabato del mese: 2 Calabria, 2 Campania, 1 Puglia oppure 1 Basilicata
+  function pickFirstSaturday(scored, forced, info, pairSet){
+    const caps = {calabria:2, campania:2, puglia: forced.length ? 0 : 1};
+    const fixedProv = new Set(forced.map(f => (info[f]||{}).province).filter(Boolean));
+    const byRegion = {};
+    scored.forEach(s => { const r = (info[s.name]||{}).region || ''; if(caps[r]) (byRegion[r] = byRegion[r] || []).push(s); });
+    const regions = Object.keys(caps).filter(r => caps[r] && byRegion[r]).map(r => {
+      const names = [], provs = new Set(fixedProv); let cost = 0;
+      for(const c of byRegion[r]){
+        if(names.length >= caps[r]) break;
+        const pr = (info[c.name]||{}).province;
+        if(pr && provs.has(pr)) continue;
+        if(names.some(x => pairSet.has(x+'|'+c.name))) continue;
+        if(forced.some(x => pairSet.has(x+'|'+c.name))) continue;
+        names.push(c.name); cost += c.score; if(pr) provs.add(pr);
+      }
+      return {names, cost};
+    });
+    const all = forced.concat(regions.flatMap(g => g.names));
+    const provSeen = new Set();
+    for(const nm of all){ const pr = (info[nm]||{}).province; if(pr){ if(provSeen.has(pr)) return []; provSeen.add(pr); } }
+    for(let a=0;a<all.length;a++) for(let b=a+1;b<all.length;b++) if(pairSet.has(all[a]+'|'+all[b])) return [];
+    return all.length >= 5 ? all : [];
+  }
+
   // persone di regioni con 2 o meno persone in squadra
   function smallRegionPeople(){
     const cnt = {};
@@ -840,7 +865,8 @@
         return {name:p.name, score};
       }).sort((a,b) => a.score - b.score);
 
-      let chosen = pickShift(scored, Math.max(n, forced.length), info, pairSet, forced);
+      let chosen = isFirstOfMonth ? pickFirstSaturday(scored, forced, info, pairSet) : [];
+      if(!chosen.length) chosen = pickShift(scored, Math.max(n, forced.length), info, pairSet, forced);
       if(chosen.length < n){
         // non si riesce a coprire tutte le regioni: si ripiega sulla scelta
         // semplice (max 3 per regione, provincia e coppie sempre rispettate)
