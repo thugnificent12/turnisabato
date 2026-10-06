@@ -1119,7 +1119,7 @@
       const fill = list.filter(n => missing.includes((info[n]||{}).region));
       if(fill.length) list = fill;
     }
-    if(!list.length) return 'Turno del ' + fmtDate(t.date) + ': nessuno disponibile per sostituire senza rompere le regole.';
+    if(!list.length) return 'Turno del ' + fmtDate(t.date) + ' resta con ' + t.people.length + ' persone: in questo mese non c\'è più nessuno libero (nessuno può fare due sabati nello stesso mese, né due sabati di fila).';
     const minC = Math.min(...list.map(draftCount));
     const bestL = list.filter(n => draftCount(n) === minC);
     const who = bestL[Math.floor(Math.random()*bestL.length)];
@@ -1129,7 +1129,7 @@
 
   // quando si toglie una persona da un turno: 1) la si rimette in un altro turno
   // che non rompe le regole; 2) il turno svuotato si riempie con un'altra persona
-  function relocatePerson(name, fromIdx, doRefill){
+  function relocatePerson(name, fromIdx, doRefill, sizeBefore){
     const minSize = parseInt(document.getElementById('f-min').value, 10) || 5;
     const maxSize = parseInt(document.getElementById('f-max').value, 10) || 6;
     const sats = draft.saturdays;
@@ -1147,7 +1147,7 @@
     else { sats[j].people.push(name); msgs.push(name + ' spostato/a a ' + fmtDate(sats[j].date) + note + '.'); }
 
     // riempie il turno solo se è sceso sotto il minimo di persone
-    if(doRefill && sats[fromIdx].people.length < minSize){
+    if(doRefill && sats[fromIdx].people.length < (sizeBefore || minSize)){
       const pp = (people.find(x => x.name === name) || {}); const m = refillShift(fromIdx, name, {province: norm(pp.province), region: norm(pp.region)});
       if(m) msgs.push(m);
     }
@@ -1228,8 +1228,9 @@
         const rm = document.createElement('button');
         rm.textContent = '×';
         rm.addEventListener('click', () => {
+          const sizeBefore = s.people.length;
           s.people = s.people.filter(n => n !== name);
-          const msg = relocatePerson(name, idx, true);
+          const msg = relocatePerson(name, idx, true, sizeBefore);
           renderResults();
           toast(msg);
         });
