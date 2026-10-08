@@ -1436,6 +1436,75 @@
     return msgs.join(' ');
   }
 
+  // cambio del referente di un sabato: se il nuovo referente lavora già in
+  // un sabato adiacente o oltre il limite del mese (1, oppure 2 nei mesi con
+  // 5 sabati), viene tolto da quell'altro sabato, dove entra chi è stato
+  // sostituito (se le regole lo permettono) oppure un altro referente.
+  function changeReferent(idx, newName){
+    const sats = draft.saturdays;
+    const old = sats[idx].referent || '';
+    sats[idx].referent = newName;
+    if(!newName || newName === old) return '';
+    const mInfo = k => {
+      const mk = monthKey(sats[k].date);
+      const idxs = sats.map((x, j) => j).filter(j => monthKey(sats[j].date) === mk);
+      return {idxs, cap: idxs.length >= 5 ? 2 : 1};
+    };
+    const adj = k => [k-1, k+1].filter(j => j >= 0 && j < sats.length);
+    const cntIn = (name, k) => mInfo(k).idxs.filter(j => j !== k && sats[j].referent === name).length;
+    const valid = (name, k) => !adj(k).some(j => sats[j].referent === name) && cntIn(name, k) < mInfo(k).cap;
+    const msgs = [];
+    const toFix = new Set(adj(idx).filter(j => sats[j].referent === newName));
+    const mi = mInfo(idx);
+    const others = mi.idxs.filter(k => k !== idx && sats[k].referent === newName);
+    others.slice(Math.max(mi.cap - 1, 0)).forEach(k => toFix.add(k));
+    toFix.forEach(k => {
+      sats[k].referent = '';
+      let rep = '';
+      if(old && old !== newName && valid(old, k)) rep = old;
+      else {
+        const byCnt = (a, b) => cntIn(a.name, k) - cntIn(b.name, k);
+        let c = refs.filter(r => r.name !== newName && valid(r.name, k)).sort(byCnt);
+        if(!c.length) c = refs.filter(r => r.name !== newName && cntIn(r.name, k) < mInfo(k).cap).sort(byCnt);
+        if(!c.length) c = refs.filter(r => r.name !== newName).sort(byCnt);
+        if(c.length) rep = c[0].name;
+      }
+      sats[k].referent = rep;
+      msgs.push(rep ? newName + ' tolto dal ' + fmtDate(sats[k].date) + ': lì va ' + rep + '.' : newName + ' tolto dal ' + fmtDate(sats[k].date) + ': nessun referente disponibile per sostituirlo.');
+    });
+    // se resta qualche regola rotta, si riassegnano i referenti dell'intera bozza
+    // tenendo fermo quello scelto e cambiando il meno possibile
+    const broken = () => sats.some((x, k) => !x.referent
+      || (k > 0 && sats[k-1].referent === x.referent)
+      || cntIn(x.referent, k) + 1 > mInfo(k).cap);
+    if(broken()){
+      const cur = sats.map(x => x.referent);
+      const res = new Array(sats.length).fill('');
+      const names = refs.map(r => r.name);
+      const cnt = {};
+      const mkOf = k => monthKey(sats[k].date);
+      const capOf = k => mInfo(k).cap;
+      const dfs = k => {
+        if(k >= sats.length) return true;
+        const cand = k === idx ? [newName] : [cur[k]].concat(names.filter(n => n !== cur[k]));
+        for(const nm of cand){
+          if(!nm) continue;
+          if(k > 0 && res[k-1] === nm) continue;
+          const key = mkOf(k) + '|' + nm;
+          if((cnt[key]||0) >= capOf(k)) continue;
+          res[k] = nm; cnt[key] = (cnt[key]||0) + 1;
+          if(dfs(k+1)) return true;
+          cnt[key]--; res[k] = '';
+        }
+        return false;
+      };
+      if(dfs(0)){
+        sats.forEach((x, k) => { if(x.referent !== res[k] && k !== idx) msgs.push(fmtDate(x.date) + ': ora ' + res[k] + '.'); x.referent = res[k]; });
+      }
+    }
+    return msgs.join(' ');
+  }
+
   // esegue una modifica; se a fine operazione un turno è sceso sotto le 5
   // persone (o ne ha più di 5) la modifica viene annullata
   function applyEdit(fn){
@@ -1503,7 +1572,11 @@
         refSel.appendChild(o);
       });
       refSel.value = s.referent || '';
-      refSel.addEventListener('change', () => { s.referent = refSel.value; });
+      refSel.addEventListener('change', () => {
+        const msg = changeReferent(idx, refSel.value);
+        renderResults();
+        if(msg) toast(msg);
+      });
       refRow.appendChild(refLab); refRow.appendChild(refSel);
       tdPeople.appendChild(refRow);
 
