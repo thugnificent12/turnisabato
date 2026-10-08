@@ -79,15 +79,34 @@
 
   #people-list{ list-style:none; margin:0 0 14px; padding:0; display:flex; flex-direction:column; }
   #people-list li{
-    display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr) auto; gap:6px;
+    display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,1fr) minmax(0,.9fr) auto; gap:6px;
     align-items:center; padding:6px 0; border-bottom:1px solid var(--line); font-size:.86rem;
   }
   #people-list li:last-child{ border-bottom:none; }
+  #refs-list{ list-style:none; margin:0 0 14px; padding:0; display:flex; flex-direction:column; }
+  #refs-list li{
+    display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr) minmax(0,.9fr) auto; gap:6px;
+    align-items:center; padding:6px 0; border-bottom:1px solid var(--line); font-size:.86rem;
+  }
+  #refs-list li:last-child{ border-bottom:none; }
+  #refs-list li.head{ color:var(--ink-soft); font-size:.74rem; font-weight:500; padding:2px 0 4px; }
+  #refs-list li.head span{ padding-left:8px; }
+  #refs-list li input{ width:100%; font-size:.85rem; padding:6px 8px; }
+  #refs-list li button{ border:none; background:transparent; color:var(--ink-soft); padding:2px 8px; font-size:.95rem; }
+  #refs-list li button:hover{ color:var(--danger); }
+  .ref-row{ display:flex; align-items:center; gap:6px; margin-top:8px; font-size:.8rem; color:var(--ink-soft); }
+  .ref-row select{ font-size:.8rem; padding:5px 6px; }
+  #people-list li.head{ color:var(--ink-soft); font-size:.74rem; font-weight:500; padding:2px 0 4px; }
+  #people-list li.head span{ padding-left:8px; }
   #people-list li input{ width:100%; font-size:.85rem; padding:6px 8px; }
   #people-list li button, #pairs-list li button{ border:none; background:transparent; color:var(--ink-soft); padding:2px 8px; font-size:.95rem; }
   #people-list li button:hover, #pairs-list li button:hover{ color:var(--danger); }
   @media (max-width:560px){
     #people-list li{ grid-template-columns:1fr 1fr auto; }
+    #people-list li.head, #refs-list li.head{ display:none; }
+    #refs-list li{ grid-template-columns:1fr 1fr auto; }
+    #refs-list li input:first-child{ grid-column:1 / 3; }
+    #refs-list li button{ grid-row:1; grid-column:3; }
     #people-list li input:first-child{ grid-column:1 / 3; }
     #people-list li button{ grid-row:1; grid-column:3; }
   }
@@ -183,7 +202,19 @@
       <input type="text" id="new-person" placeholder="Nome e cognome">
       <input type="text" id="new-region" placeholder="Regione">
       <input type="text" id="new-province" placeholder="Provincia">
+      <input type="text" id="new-cid" placeholder="CID" inputmode="numeric">
       <button class="ghost" id="add-person">Aggiungi</button>
+    </div>
+  </section>
+
+  <section id="refs-section">
+    <h2>Referenti <span class="count" id="refs-count"></span></h2>
+    <ul id="refs-list"></ul>
+    <div class="row add-person-row">
+      <input type="text" id="new-ref" placeholder="Nome e cognome">
+      <input type="text" id="new-ref-region" placeholder="Regione">
+      <input type="text" id="new-ref-cid" placeholder="CID" inputmode="numeric">
+      <button class="ghost" id="add-ref">Aggiungi</button>
     </div>
   </section>
 
@@ -196,6 +227,13 @@
       </label>
       <label>Mese di partenza
         <select id="f-month"></select>
+      </label>
+      <label class="full">Persone per turno
+        <div class="minmax">
+          <input type="number" id="f-min" min="3" max="6" value="5"> –
+          <input type="number" id="f-max" min="3" max="6" value="5">
+          <span style="color:var(--ink-soft); font-size:.8rem;">a sabato (il primo sabato di ogni mese ha il massimo)</span>
+        </div>
       </label>
       <div class="full">
         <button type="submit" class="primary">Genera turni</button>
@@ -241,34 +279,42 @@
   const LS_PEOPLE = 'turni_sabato_people_v2';
   const LS_SCHEDULES = 'turni_sabato_schedules_v2';
   const LS_PAIRS = 'turni_sabato_pairs_v2';
+  const LS_REFS = 'turni_sabato_refs_v1';
+  // referenti: ogni sabato ce n'è uno in più rispetto ai tecnici
+  const SEED_REFS = [
+    ['Antonio Sorrentino','Calabria','00273262'],
+    ['Donato De Mango','Puglia','00292648'],
+    ["Luigi D'Amato",'Campania','00297088'],
+    ['Fabio Bratomi','Basilicata','00295195']
+  ];
 
   // squadra iniziale: nome, regione, provincia
   const SEED_TEAM = [
-    ['Angelo Barresi','Calabria','Reggio'],
-    ['Claudio Quieto','Calabria','Reggio'],
-    ['Giacomo Pezzimenti','Calabria','Reggio'],
-    ['Adriano Parise','Calabria','Cosenza'],
-    ['Giuseppe Citino','Calabria','Cosenza'],
-    ['Giuseppe Giofré','Calabria','Vibo'],
-    ['Francesco Rondinelli','Calabria','Lamezia Terme'],
-    ['Francesco Maiolo','Calabria','Crotone'],
-    ['Marco Mesuraca','Calabria','Catanzaro'],
-    ['Andrea Caracciolo','Calabria','Catanzaro'],
-    ['Roberto Antonaci','Puglia','Lecce'],
-    ['Fabio Santacroce','Puglia','Foggia'],
-    ['Carmine Casamassima','Puglia','Foggia'],
-    ['Giuseppe Sparapano','Puglia','Bari'],
-    ['Michele Minafra','Puglia','Bari'],
-    ['Angelo Fabrizio','Campania','Avellino'],
-    ['Gennaro Santonastaso','Campania','Caserta'],
-    ['Valerio Carusone','Campania','Caserta'],
-    ['Vincenzo Porrino','Campania','Caserta'],
-    ['Maurizio Vestini','Campania','Caserta'],
-    ['Viviana Saturno','Campania','Napoli'],
-    ['Davide Cosenza','Campania','Sala Consilina'],
-    ['Giovanni Del Bue','Campania','Sala Consilina'],
-    ["Vitantonio D'Annucci",'Basilicata','Potenza'],
-    ['Mario Lucio Monaco','Basilicata','Potenza']
+    ['Angelo Barresi','Calabria','Reggio','00288518'],
+    ['Claudio Quieto','Calabria','Reggio','00400482'],
+    ['Giacomo Pezzimenti','Calabria','Reggio','00430149'],
+    ['Adriano Parise','Calabria','Cosenza','00207734'],
+    ['Giuseppe Citino','Calabria','Cosenza','00298843'],
+    ['Giuseppe Giofré','Calabria','Vibo','00256898'],
+    ['Francesco Rondinelli','Calabria','Lamezia Terme','00428410'],
+    ['Francesco Maiolo','Calabria','Crotone','00220894'],
+    ['Marco Mesuraca','Calabria','Catanzaro','00382611'],
+    ['Andrea Caracciolo','Calabria','Catanzaro','00430153'],
+    ['Roberto Antonaci','Puglia','Lecce','00308446'],
+    ['Fabio Santacroce','Puglia','Foggia','00195764'],
+    ['Carmine Casamassima','Puglia','Foggia','00386399'],
+    ['Giuseppe Sparapano','Puglia','Bari','00404987'],
+    ['Michele Minafra','Puglia','Bari','00303696'],
+    ['Angelo Fabrizio','Campania','Avellino','00174492'],
+    ['Gennaro Santonastaso','Campania','Caserta','00168006'],
+    ['Valerio Carusone','Campania','Caserta','00267564'],
+    ['Vincenzo Porrino','Campania','Caserta','00214362'],
+    ['Maurizio Vestini','Campania','Caserta','00191879'],
+    ['Viviana Saturno','Campania','Napoli','00421909'],
+    ['Davide Cosenza','Campania','Sala Consilina','00440661'],
+    ['Giovanni Del Bue','Campania','Sala Consilina','00211853'],
+    ["Vitantonio D'Annucci",'Basilicata','Potenza','00382292'],
+    ['Mario Lucio Monaco','Basilicata','Potenza','00273393']
   ];
   let dbApi = null;       // resolved "db" capability, or null if unavailable
   let dbReady = false;    // true once we've done our first sync
@@ -352,6 +398,7 @@
 
   let people = [];
   let schedules = [];
+  let refs = [];    // referenti: [{id, name, region, cid}]
   let pairs = [];   // coppie che non devono stare insieme: [{a:'Nome', b:'Nome'}]
   let draft = null; // { year, startMonth, saturdays: [{date, people:[name,...]}] }
 
@@ -365,17 +412,28 @@
     setSyncNote('Modalità offline: i dati restano solo su questo dispositivo.');
     people = loadPeopleLocal();
     if(!people){
-      people = SEED_TEAM.map(([name,region,province]) => ({id: uid(), name, region, province}));
+      people = SEED_TEAM.map(([name,region,province,cid]) => ({id: uid(), name, region, province, cid}));
       savePeopleLocal(people);
+    }
+    // assegna il CID a chi non ce l'ha ancora (squadra salvata prima dei codici)
+    let touched = false;
+    people.forEach(p => { if(p.cid === undefined){ const sd = SEED_TEAM.find(x => x[0] === p.name); p.cid = sd ? sd[3] : ''; touched = true; } });
+    if(touched) savePeopleLocal(people);
+    try{ const rr = localStorage.getItem(LS_REFS); if(rr) refs = JSON.parse(rr); }catch(e){}
+    if(!refs.length){
+      refs = SEED_REFS.map(([name,region,cid]) => ({id: uid(), name, region, cid}));
+      try{ localStorage.setItem(LS_REFS, JSON.stringify(refs)); }catch(e){}
     }
     schedules = loadSchedulesLocal();
     pairs = loadPairsLocal();
+    renderRefs();
     renderPeople(); renderRules(); renderStats(); renderHistory();
   }
 
-  async function addPerson(name, region, province){
-    if(dbApi){ await dbApi.collection('people').add({name, region, province}); }
-    else{ people.push({id: uid(), name, region, province}); savePeopleLocal(people); renderPeople(); renderRules(); renderStats(); }
+  async function addPerson(name, region, province, cid){
+    cid = cid || '';
+    if(dbApi){ await dbApi.collection('people').add({name, region, province, cid}); }
+    else{ people.push({id: uid(), name, region, province, cid}); savePeopleLocal(people); renderPeople(); renderRules(); renderStats(); }
   }
   async function updatePersonField(id, field, value){
     if(dbApi){ await dbApi.doc('people/'+id).update({[field]: value}); }
@@ -384,6 +442,19 @@
       if(p) p[field] = value;
       savePeopleLocal(people);
     }
+  }
+  function saveRefsLocal(){ try{ localStorage.setItem(LS_REFS, JSON.stringify(refs)); }catch(e){} }
+  async function addRef(name, region, cid){
+    if(dbApi){ await dbApi.collection('referents').add({name, region, cid}); }
+    else{ refs.push({id: uid(), name, region, cid}); saveRefsLocal(); renderRefs(); }
+  }
+  async function updateRefField(id, field, value){
+    if(dbApi){ await dbApi.doc('referents/'+id).update({[field]: value}); }
+    else{ const r = refs.find(x => x.id === id); if(r) r[field] = value; saveRefsLocal(); }
+  }
+  async function deleteRef(id){
+    if(dbApi){ await dbApi.doc('referents/'+id).delete(); }
+    else{ refs = refs.filter(x => x.id !== id); saveRefsLocal(); renderRefs(); }
   }
   async function savePairs(list){
     pairs = list;
@@ -461,18 +532,42 @@
         for(const d of oldP.docs){ await dbApi.doc('people/'+d.id).delete(); }
         const oldS = await dbApi.collection('schedules').get();
         for(const d of oldS.docs){ await dbApi.doc('schedules/'+d.id).delete(); }
-        for(const [name,region,province] of SEED_TEAM){
-          await dbApi.collection('people').add({name, region, province});
+        for(const [name,region,province,cid] of SEED_TEAM){
+          await dbApi.collection('people').add({name, region, province, cid});
         }
       }
     }catch(e){ console.warn('seed error', e); }
 
+    // referenti: la prima volta si inseriscono i quattro iniziali
+    try{
+      const rf = await dbApi.doc('meta/referents_v1').get();
+      if(!rf.exists){
+        await dbApi.doc('meta/referents_v1').set({seeded:true, at:Date.now()});
+        const cur = await dbApi.collection('referents').get();
+        if(cur.docs.length === 0){
+          for(const [name,region,cid] of SEED_REFS){ await dbApi.collection('referents').add({name, region, cid}); }
+        }
+      }
+    }catch(e){ console.warn('referents seed error', e); }
+    dbApi.collection('referents').onSnapshot(snap => {
+      refs = snap.docs.map(d => { const x = d.data() || {}; return {id: d.id, name: x.name || '', region: x.region || '', cid: x.cid || ''}; });
+      renderRefs(); renderResultsIfDraft();
+    }, err => { console.warn('referents snapshot error', err); });
+
     dbApi.collection('people').onSnapshot(snap => {
       people = snap.docs.map(d => {
         const x = d.data() || {};
-        return {id: d.id, name: x.name || '', region: x.region || '', province: x.province || ''};
+        return {id: d.id, name: x.name || '', region: x.region || '', province: x.province || '', cid: x.cid};
       }).sort((a,b) => 0);
       renderPeople(); renderRules(); renderStats(); renderResultsIfDraft();
+      // squadra salvata prima dei codici: assegna il CID una sola volta
+      people.forEach(p => {
+        if(p.cid === undefined){
+          const sd = SEED_TEAM.find(x => x[0] === p.name);
+          p.cid = sd ? sd[3] : '';
+          dbApi.doc('people/'+p.id).update({cid: p.cid}).catch(() => {});
+        }
+      });
     }, err => { console.warn('people snapshot error', err); });
 
     dbApi.collection('schedules').onSnapshot(snap => {
@@ -617,7 +712,8 @@
   }
 
   // ---------- vincoli: regione, provincia, coppie vietate ----------
-  const SHIFT_SIZE = 5;         // ogni turno ha sempre 5 persone
+  const shiftMax = () => Math.min(6, Math.max(3, parseInt(document.getElementById('f-max').value, 10) || 5));
+  const shiftMin = () => Math.min(shiftMax(), Math.max(3, parseInt(document.getElementById('f-min').value, 10) || 5));
   const MAX_PER_REGION = 2;     // al massimo 2 persone della stessa regione per turno
   const FIRST_SATURDAY_SIZE = 5; // persone nel primo sabato lavorativo di ogni mese
   // tetto per regione in un turno: Puglia 1, le altre 2 (Calabria e Campania
@@ -789,6 +885,45 @@
     return reasons;
   }
 
+  // ---------- referenti ----------
+  // ogni sabato ha 1 referente (in più rispetto ai tecnici). Ognuno fa un solo
+  // sabato al mese; due solo nei mesi con 5 sabati. Mai due sabati di fila.
+  // Chi salta un mese passa avanti nel mese dopo; si ruota anche sulla posizione.
+  function assignReferents(saturdays){
+    if(!refs.length) return saturdays.map(() => '');
+    const mIdx = iso => parseInt(iso.slice(0,4),10)*12 + parseInt(iso.slice(5,7),10);
+    const st = {};
+    refs.forEach(r => { st[r.name] = {total:0, last:0, pos:{}, month:{}}; });
+    schedules.forEach(per => per.saturdays.forEach(sat => {
+      const x = sat.referent && st[sat.referent]; if(!x) return;
+      x.total++; x.last = Math.max(x.last, mIdx(sat.date));
+      const o = saturdayOrdinalInMonth(sat.date);
+      x.pos['s'+o.ordStart] = (x.pos['s'+o.ordStart]||0)+1; x.pos['e'+o.ordEnd] = (x.pos['e'+o.ordEnd]||0)+1;
+    }));
+    const perMonth = {};
+    saturdays.forEach(iso => perMonth[monthKey(iso)] = (perMonth[monthKey(iso)]||0)+1);
+    const out = [];
+    saturdays.forEach((iso, i) => {
+      const mk = monthKey(iso), cap = perMonth[mk] >= 5 ? 2 : 1;
+      const o = saturdayOrdinalInMonth(iso);
+      const prev = i > 0 ? out[i-1] : null;
+      const score = r => {
+        const x = st[r.name];
+        const gap = x.last ? mIdx(iso) - x.last : 6;
+        return -Math.min(Math.max(gap,0),6)*5e4 + ((x.pos['s'+o.ordStart]||0) + (x.pos['e'+o.ordEnd]||0))*1000 + x.total*10 + Math.random()*3;
+      };
+      let c = refs.filter(r => (st[r.name].month[mk]||0) < cap && r.name !== prev);
+      if(!c.length) c = refs.filter(r => (st[r.name].month[mk]||0) < cap);
+      if(!c.length) c = refs.slice();
+      c.sort((a,b) => score(a) - score(b));
+      const pick = c[0].name, x = st[pick];
+      out.push(pick);
+      x.total++; x.last = mIdx(iso); x.month[mk] = (x.month[mk]||0)+1;
+      x.pos['s'+o.ordStart] = (x.pos['s'+o.ordStart]||0)+1; x.pos['e'+o.ordEnd] = (x.pos['e'+o.ordEnd]||0)+1;
+    });
+    return out;
+  }
+
   // ---------- generation with fairness ----------
   function generateDraftOnce(year, startMonth, min, max){
     const {saturdays, skipped} = getSaturdaysForQuarter(year, startMonth);
@@ -842,7 +977,9 @@
           const cost = i => {
             const o = saturdayOrdinalInMonth(saturdays[i]);
             const w = work[nm];
-            return ((w.monthPosStart[o.ordStart]||0) + (w.monthPosEnd[o.ordEnd]||0)) * 10
+            // con turni da 6 serve la Basilicata (con 2 Calabria + 2 Campania + 1 Puglia si arriva a 5)
+            const firstBonus = (max > 5 && o.ordStart === 1) ? -25 : 0;
+            return firstBonus + ((w.monthPosStart[o.ordStart]||0) + (w.monthPosEnd[o.ordEnd]||0)) * 10
               + ((planCnt[nm]||{})['s'+o.ordStart]||0) * 10 + ((planCnt[nm]||{})['e'+o.ordEnd]||0) * 10 + Math.random();
           };
           const adj = i => mine.includes(i-1) || mine.includes(i+1) || (i === 0 && boundaryExclude.has(nm));
@@ -948,6 +1085,8 @@
       result.push({date: iso, people: chosen});
     }
 
+    const refAssign = assignReferents(result.map(r => r.date));
+    result.forEach((r, i) => { r.referent = refAssign[i]; });
     return {year, startMonth, saturdays: result, skipped, relaxedMonth, relaxedConsecutive, relaxedPosition, positionRepeatCost, underfilled, regionRuleBroken, shrunk};
   }
 
@@ -976,6 +1115,10 @@
 
   function renderPeople(){
     peopleListEl.innerHTML = '';
+    const headLi = document.createElement('li');
+    headLi.className = 'head';
+    ['Nome','Regione','Provincia','CID',''].forEach(t => { const sp = document.createElement('span'); sp.textContent = t; headLi.appendChild(sp); });
+    peopleListEl.appendChild(headLi);
     people.forEach(p => {
       const li = document.createElement('li');
       const mk = (value, placeholder, onChange) => {
@@ -991,6 +1134,9 @@
       }));
       li.appendChild(mk(p.region, 'Regione', v => { p.region = v; updatePersonField(p.id, 'region', v); }));
       li.appendChild(mk(p.province, 'Provincia', v => { p.province = v; updatePersonField(p.id, 'province', v); }));
+      const cidIn = mk(p.cid, 'CID', v => { p.cid = v; updatePersonField(p.id, 'cid', v); });
+      cidIn.inputMode = 'numeric';
+      li.appendChild(cidIn);
       const del = document.createElement('button');
       del.textContent = '×';
       del.title = 'Rimuovi';
@@ -1000,6 +1146,42 @@
     });
     teamCount.textContent = people.length + ' persone';
   }
+
+  const refsListEl = document.getElementById('refs-list');
+  function renderRefs(){
+    if(!refsListEl) return;
+    refsListEl.innerHTML = '';
+    const headLi = document.createElement('li');
+    headLi.className = 'head';
+    ['Nome','Regione','CID',''].forEach(t => { const sp = document.createElement('span'); sp.textContent = t; headLi.appendChild(sp); });
+    refsListEl.appendChild(headLi);
+    refs.forEach(r => {
+      const li = document.createElement('li');
+      const mk = (value, ph, onChange) => {
+        const input = document.createElement('input');
+        input.type = 'text'; input.value = value || ''; input.placeholder = ph;
+        input.addEventListener('change', () => onChange(input.value.trim()));
+        return input;
+      };
+      li.appendChild(mk(r.name, 'Nome e cognome', v => { const nv = v || r.name; r.name = nv; updateRefField(r.id, 'name', nv); }));
+      li.appendChild(mk(r.region, 'Regione', v => { r.region = v; updateRefField(r.id, 'region', v); }));
+      const c = mk(r.cid, 'CID', v => { r.cid = v; updateRefField(r.id, 'cid', v); });
+      c.inputMode = 'numeric';
+      li.appendChild(c);
+      const del = document.createElement('button');
+      del.textContent = '×'; del.title = 'Rimuovi';
+      del.addEventListener('click', () => deleteRef(r.id));
+      li.appendChild(del);
+      refsListEl.appendChild(li);
+    });
+    document.getElementById('refs-count').textContent = refs.length + (refs.length === 1 ? ' persona' : ' persone');
+  }
+  document.getElementById('add-ref').addEventListener('click', () => {
+    const name = document.getElementById('new-ref').value.trim();
+    if(!name) return;
+    addRef(name, document.getElementById('new-ref-region').value.trim(), document.getElementById('new-ref-cid').value.trim());
+    ['new-ref','new-ref-region','new-ref-cid'].forEach(id => document.getElementById(id).value = '');
+  });
 
   const pairsListEl = document.getElementById('pairs-list');
   const pairA = document.getElementById('pair-a');
@@ -1048,11 +1230,12 @@
     const name = document.getElementById('new-person').value.trim();
     const region = document.getElementById('new-region').value.trim();
     const province = document.getElementById('new-province').value.trim();
+    const cid = document.getElementById('new-cid').value.trim();
     if(!name) return;
-    addPerson(name, region, province);
-    ['new-person','new-region','new-province'].forEach(id => document.getElementById(id).value = '');
+    addPerson(name, region, province, cid);
+    ['new-person','new-region','new-province','new-cid'].forEach(id => document.getElementById(id).value = '');
   });
-  ['new-person','new-region','new-province'].forEach(id => {
+  ['new-person','new-region','new-province','new-cid'].forEach(id => {
     document.getElementById(id).addEventListener('keydown', e => {
       if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('add-person').click(); }
     });
@@ -1178,8 +1361,8 @@
   // quando si toglie una persona da un turno: 1) la si rimette in un altro turno
   // che non rompe le regole; 2) il turno svuotato si riempie con un'altra persona
   function relocatePerson(name, fromIdx, doRefill, sizeBefore){
-    const minSize = SHIFT_SIZE;
-    const maxSize = SHIFT_SIZE;
+    const minSize = shiftMin();
+    const maxSize = shiftMax();
     const sats = draft.saturdays;
     const msgs = [];
 
@@ -1215,7 +1398,7 @@
   function resolveAfterAdd(added, idx){
     const sats = draft.saturdays, t = sats[idx];
     const info = buildInfo(), pairSet = buildPairSet();
-    const maxSize = SHIFT_SIZE;
+    const maxSize = shiftMax();
     const inf = info[added] || {};
     const msgs = [];
     // se la persona aggiunta è già in un sabato adiacente (o ripete la stessa
@@ -1258,7 +1441,7 @@
   function applyEdit(fn){
     const snap = draft.saturdays.map(x => x.people.slice());
     const msg = fn();
-    const bad = draft.saturdays.some((x, i) => x.people.length < Math.min(snap[i].length, SHIFT_SIZE) || x.people.length > SHIFT_SIZE);
+    const bad = draft.saturdays.some((x, i) => x.people.length < snap[i].length || x.people.length > Math.max(snap[i].length, shiftMax()));
     if(bad){
       draft.saturdays.forEach((x, i) => { x.people = snap[i]; });
       return {undone: true, msg: ''};
@@ -1290,7 +1473,7 @@
         const nm = document.createElement('span'); nm.textContent = name;
         who.appendChild(nm);
         const pr = people.find(x => x.name === name);
-        const metaTxt = pr ? [pr.region, pr.province].filter(Boolean).join(', ') : '';
+        const metaTxt = pr ? [pr.cid ? 'CID ' + pr.cid : '', [pr.region, pr.province].filter(Boolean).join(', ')].filter(Boolean).join(' · ') : '';
         if(metaTxt){ const mt = document.createElement('span'); mt.className = 'meta'; mt.textContent = metaTxt; who.appendChild(mt); }
         chip.appendChild(who);
         const rm = document.createElement('button');
@@ -1308,6 +1491,21 @@
         chips.appendChild(chip);
       });
       tdPeople.appendChild(chips);
+
+      const refRow = document.createElement('div');
+      refRow.className = 'ref-row';
+      const refLab = document.createElement('span'); refLab.textContent = 'Referente:';
+      const refSel = document.createElement('select');
+      const none = document.createElement('option'); none.value = ''; none.textContent = '—'; refSel.appendChild(none);
+      refs.forEach(r => {
+        const o = document.createElement('option'); o.value = r.name;
+        o.textContent = r.name + (r.region ? ' (' + r.region + (r.cid ? ' · CID ' + r.cid : '') + ')' : '');
+        refSel.appendChild(o);
+      });
+      refSel.value = s.referent || '';
+      refSel.addEventListener('change', () => { s.referent = refSel.value; });
+      refRow.appendChild(refLab); refRow.appendChild(refSel);
+      tdPeople.appendChild(refRow);
 
       const addRow = document.createElement('div');
       addRow.className = 'add-slot';
@@ -1373,8 +1571,8 @@
     e.preventDefault();
     const year = parseInt(yearInput.value, 10);
     const startMonth = parseInt(monthSelect.value, 10);
-    let min = SHIFT_SIZE;
-    let max = SHIFT_SIZE;
+    let min = shiftMin();
+    let max = shiftMax();
     if(max < min){ const t=min; min=max; max=t; }
     if(people.length === 0){
       genNotice.innerHTML = '<p class="notice skip">Aggiungi almeno una persona alla squadra prima di generare i turni.</p>';
@@ -1464,7 +1662,7 @@
   }
   function personMeta(name){
     const pr = people.find(x => x.name === name);
-    const t = pr ? [pr.region, pr.province].filter(Boolean).join(', ') : '';
+    const t = pr ? [pr.cid ? 'CID ' + pr.cid : '', [pr.region, pr.province].filter(Boolean).join(', ')].filter(Boolean).join(' · ') : '';
     return t;
   }
   function renderHistory(){
@@ -1492,6 +1690,12 @@
           if(m){ const ms = document.createElement('span'); ms.className = 'meta'; ms.textContent = ' (' + m + ')'; pEl.appendChild(ms); }
           if(i < sat.people.length-1) pEl.appendChild(document.createTextNode('; '));
         });
+        if(sat.referent){
+          const rr = refs.find(x => x.name === sat.referent) || {};
+          pEl.appendChild(document.createTextNode(' — Referente: ' + sat.referent));
+          const rm = [rr.cid ? 'CID ' + rr.cid : '', rr.region].filter(Boolean).join(' · ');
+          if(rm){ const ms = document.createElement('span'); ms.className = 'meta'; ms.textContent = ' (' + rm + ')'; pEl.appendChild(ms); }
+        }
         detail.appendChild(pEl);
       });
       const show = document.createElement('button');
@@ -1520,15 +1724,19 @@
   function exportTables(saturdays){
     const info = {}; people.forEach(p => { info[p.name] = p; });
     const fmt = iso => iso.slice(8,10)+'/'+iso.slice(5,7)+'/'+iso.slice(0,4);
-    const detail = [['Data','Sabato del mese','Nome','Regione','Provincia']];
-    const summary = [['Data','Sabato del mese','Numero persone','Persone']];
+    const detail = [['Data','Sabato del mese','Ruolo','Nome','CID','Regione','Provincia']];
+    const summary = [['Data','Sabato del mese','Numero persone','Persone','Referente']];
     saturdays.forEach(s => {
       const label = saturdayOrdinalInMonth(s.date).ordStart + '° sabato';
       s.people.forEach(n => {
         const p = info[n] || {};
-        detail.push([fmt(s.date), label, n, p.region || '', p.province || '']);
+        detail.push([fmt(s.date), label, 'Tecnico', n, String(p.cid || ''), p.region || '', p.province || '']);
       });
-      summary.push([fmt(s.date), label, s.people.length, s.people.join(', ')]);
+      if(s.referent){
+        const rf = refs.find(x => x.name === s.referent) || {};
+        detail.push([fmt(s.date), label, 'Referente', s.referent, String(rf.cid || ''), rf.region || '', '']);
+      }
+      summary.push([fmt(s.date), label, s.people.length, s.people.join(', '), s.referent || '']);
     });
     return {detail, summary};
   }
@@ -1625,8 +1833,8 @@
     const base = 'turni-sabato_' + title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     try{
       const bytes = buildXlsx([
-        {name:'Turni', rows:detail, widths:[12,15,26,14,18]},
-        {name:'Riepilogo', rows:summary, widths:[12,15,16,90]}
+        {name:'Turni', rows:detail, widths:[12,15,11,26,12,14,18]},
+        {name:'Riepilogo', rows:summary, widths:[12,15,16,90,24]}
       ]);
       const ok = await saveFile(base + '.xlsx', new Blob([bytes], {type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
       if(ok) toast('File Excel pronto');
